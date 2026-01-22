@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package veritas.auth.v1;
+
+import "google/protobuf/timestamp.proto";
+
+message SrpParameters {
+  string group = 1;
+  string hash = 2;
+}
+
+message BeginAuthRequest {
+  string login_username = 1;
+}
+
+message BeginAuthResponse {
+  bytes salt = 1;
+  bytes server_public = 2;
+  string session_id = 3;
+  SrpParameters params = 4;
+}
+
+message FinishAuthRequest {
+  string session_id = 1;
+  bytes client_proof = 2;
+}
+
+message FinishAuthResponse {
+  bytes server_proof = 1;
+  string user_uuid = 2;
+  bytes refresh_token = 3;
+  google.protobuf.Timestamp expires_at = 4;
+}
+
+service Gatekeeper {
+  rpc BeginAuth(BeginAuthRequest) returns (BeginAuthResponse);
+  rpc FinishAuth(FinishAuthRequest) returns (FinishAuthResponse);
+}
