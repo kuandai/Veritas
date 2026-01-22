@@ -5,21 +5,7 @@
 #include <memory>
 #include <unordered_set>
 
-#if !defined(VERITAS_DISABLE_REDIS)
-#include <sw/redis++/redis++.h>
-#endif
-
 namespace veritas::gatekeeper {
-
-#if !defined(VERITAS_DISABLE_REDIS)
-class RedisClient {
- public:
-  explicit RedisClient(const sw::redis::ConnectionOptions& options)
-      : redis(options) {}
-
-  sw::redis::Redis redis;
-};
-#endif
 
 namespace {
 

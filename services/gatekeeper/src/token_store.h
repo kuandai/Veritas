@@ -8,6 +8,10 @@
 #include <string>
 #include <unordered_map>
 
+#if !defined(VERITAS_DISABLE_REDIS)
+#include <sw/redis++/redis++.h>
+#endif
+
 namespace veritas::gatekeeper {
 
 struct TokenRecord {
@@ -52,6 +56,14 @@ class InMemoryTokenStore final : public TokenStore {
 };
 
 #if !defined(VERITAS_DISABLE_REDIS)
+class RedisClient {
+ public:
+  explicit RedisClient(const sw::redis::ConnectionOptions& options)
+      : redis(options) {}
+
+  sw::redis::Redis redis;
+};
+
 class RedisTokenStore final : public TokenStore {
  public:
   explicit RedisTokenStore(std::string uri);
@@ -62,7 +74,7 @@ class RedisTokenStore final : public TokenStore {
 
  private:
   std::string uri_;
-  std::unique_ptr<class RedisClient> redis_;
+  std::unique_ptr<RedisClient> redis_;
 };
 #else
 class RedisTokenStore final : public TokenStore {

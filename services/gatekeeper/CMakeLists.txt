@@ -7,6 +7,7 @@ file(GLOB_RECURSE GATEKEEPER_SOURCES CONFIGURE_DEPENDS
 
 if(GATEKEEPER_SOURCES)
   find_package(OpenSSL REQUIRED)
+  find_package(cyrus-sasl REQUIRED CONFIG)
   find_package(gRPC QUIET CONFIG)
   if(NOT gRPC_FOUND)
     find_package(grpc QUIET CONFIG)
@@ -50,6 +51,7 @@ if(GATEKEEPER_SOURCES)
       veritas_protocol
       ${GRPC_CPP_TARGET}
       ${REDIS_CPP_TARGET}
+      cyrus-sasl::cyrus-sasl
       OpenSSL::Crypto
   )
   target_compile_features(veritas_gatekeeper PRIVATE cxx_std_20)
