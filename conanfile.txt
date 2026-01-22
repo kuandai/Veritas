@@ -4,6 +4,7 @@ libsodium/1.0.19
 cyrus-sasl/2.1.28
 libsecret/0.20.5
 protobuf/3.21.12
+grpc/1.54.3
 
 [generators]
 CMakeDeps
