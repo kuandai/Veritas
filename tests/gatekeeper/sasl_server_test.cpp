@@ -33,6 +33,7 @@ SaslServerOptions DefaultOptions() {
   SaslServerOptions options;
   options.fake_salt_secret = "test-secret";
   options.token_ttl_days = 1;
+  options.skip_sasl_init = true;
   return options;
 }
 

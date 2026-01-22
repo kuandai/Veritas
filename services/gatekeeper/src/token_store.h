@@ -51,6 +51,7 @@ class InMemoryTokenStore final : public TokenStore {
   std::unordered_map<std::string, TokenRecord> tokens_;
 };
 
+#if !defined(VERITAS_DISABLE_REDIS)
 class RedisTokenStore final : public TokenStore {
  public:
   explicit RedisTokenStore(std::string uri);
@@ -63,5 +64,18 @@ class RedisTokenStore final : public TokenStore {
   std::string uri_;
   std::unique_ptr<class RedisClient> redis_;
 };
+#else
+class RedisTokenStore final : public TokenStore {
+ public:
+  explicit RedisTokenStore(std::string uri);
+
+  void PutToken(const TokenRecord& record) override;
+  std::optional<TokenRecord> GetToken(const std::string& token_hash) override;
+  void RevokeUser(const std::string& user_uuid) override;
+
+ private:
+  std::string uri_;
+};
+#endif
 
 }  // namespace veritas::gatekeeper

@@ -7,7 +7,9 @@
 
 #include <mutex>
 
+#if !defined(VERITAS_DISABLE_SASL)
 #include <sasl/sasl.h>
+#endif
 
 #include "secure_erase.h"
 #include "token_utils.h"
@@ -38,10 +40,15 @@ SaslServer::SaslServer(SaslServerOptions options)
   } else {
     token_store_ = std::make_shared<InMemoryTokenStore>();
   }
-  EnsureInitialized();
+  if (!options_.skip_sasl_init) {
+    EnsureInitialized();
+  }
 }
 
+SaslServer::~SaslServer() = default;
+
 void SaslServer::EnsureInitialized() {
+#if !defined(VERITAS_DISABLE_SASL)
   std::call_once(g_sasl_init_once, []() {
     const int result = sasl_server_init(nullptr, "veritas_gatekeeper");
     if (result != SASL_OK) {
@@ -50,14 +57,17 @@ void SaslServer::EnsureInitialized() {
       return;
     }
   });
+#endif
 }
 
 grpc::Status SaslServer::BeginAuth(
     const veritas::auth::v1::BeginAuthRequest& request,
     veritas::auth::v1::BeginAuthResponse* response) {
-  EnsureInitialized();
-  if (!g_sasl_init_status.ok()) {
-    return g_sasl_init_status;
+  if (!options_.skip_sasl_init) {
+    EnsureInitialized();
+    if (!g_sasl_init_status.ok()) {
+      return g_sasl_init_status;
+    }
   }
   if (request.login_username().empty()) {
     return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
@@ -96,9 +106,11 @@ grpc::Status SaslServer::BeginAuth(
 grpc::Status SaslServer::FinishAuth(
     const veritas::auth::v1::FinishAuthRequest& request,
     veritas::auth::v1::FinishAuthResponse* response) {
-  EnsureInitialized();
-  if (!g_sasl_init_status.ok()) {
-    return g_sasl_init_status;
+  if (!options_.skip_sasl_init) {
+    EnsureInitialized();
+    if (!g_sasl_init_status.ok()) {
+      return g_sasl_init_status;
+    }
   }
   if (request.session_id().empty()) {
     return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,

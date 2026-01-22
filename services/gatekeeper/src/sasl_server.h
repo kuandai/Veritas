@@ -17,6 +17,7 @@ struct SaslServerOptions {
   std::chrono::seconds session_ttl{std::chrono::minutes(10)};
   int token_ttl_days = 30;
   std::shared_ptr<TokenStore> token_store;
+  bool skip_sasl_init = false;
 };
 
 class SaslServer {

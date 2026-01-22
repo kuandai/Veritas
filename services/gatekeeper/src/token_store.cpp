@@ -5,19 +5,25 @@
 #include <memory>
 #include <unordered_set>
 
+#if !defined(VERITAS_DISABLE_REDIS)
 #include <sw/redis++/redis++.h>
+#endif
 
 namespace veritas::gatekeeper {
 
-namespace {
-
-struct RedisClient {
+#if !defined(VERITAS_DISABLE_REDIS)
+class RedisClient {
+ public:
   explicit RedisClient(const sw::redis::ConnectionOptions& options)
       : redis(options) {}
 
   sw::redis::Redis redis;
 };
+#endif
 
+namespace {
+
+#if !defined(VERITAS_DISABLE_REDIS)
 sw::redis::ConnectionOptions ParseRedisUri(const std::string& uri) {
   if (uri.rfind("rediss://", 0) == 0) {
     throw TokenStoreError(TokenStoreError::Kind::Unavailable,
@@ -73,6 +79,7 @@ sw::redis::ConnectionOptions ParseRedisUri(const std::string& uri) {
   options.socket_timeout = std::chrono::milliseconds(200);
   return options;
 }
+#endif
 
 std::string TokenKey(const std::string& token_hash) {
   return "token:" + token_hash;
@@ -111,6 +118,7 @@ void InMemoryTokenStore::RevokeUser(const std::string& user_uuid) {
   }
 }
 
+#if !defined(VERITAS_DISABLE_REDIS)
 RedisTokenStore::RedisTokenStore(std::string uri) : uri_(std::move(uri)) {
   const auto options = ParseRedisUri(uri_);
   redis_ = std::make_unique<RedisClient>(options);
@@ -175,5 +183,27 @@ void RedisTokenStore::RevokeUser(const std::string& user_uuid) {
     throw TokenStoreError(TokenStoreError::Kind::Unavailable, ex.what());
   }
 }
+#else
+RedisTokenStore::RedisTokenStore(std::string uri) : uri_(std::move(uri)) {
+  throw TokenStoreError(TokenStoreError::Kind::Unavailable,
+                        "Redis support is disabled");
+}
+
+void RedisTokenStore::PutToken(const TokenRecord& /*record*/) {
+  throw TokenStoreError(TokenStoreError::Kind::Unavailable,
+                        "Redis support is disabled");
+}
+
+std::optional<TokenRecord> RedisTokenStore::GetToken(
+    const std::string& /*token_hash*/) {
+  throw TokenStoreError(TokenStoreError::Kind::Unavailable,
+                        "Redis support is disabled");
+}
+
+void RedisTokenStore::RevokeUser(const std::string& /*user_uuid*/) {
+  throw TokenStoreError(TokenStoreError::Kind::Unavailable,
+                        "Redis support is disabled");
+}
+#endif
 
 }  // namespace veritas::gatekeeper
