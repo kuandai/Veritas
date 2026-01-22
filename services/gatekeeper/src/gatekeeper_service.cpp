@@ -83,13 +83,14 @@ grpc::Status GatekeeperServiceImpl::BeginAuth(grpc::ServerContext* context,
                                               const BeginAuthRequest* request,
                                               BeginAuthResponse* response) {
   const std::string peer_ip = ExtractPeerIp(context);
+  grpc::Status status;
   if (!rate_limiter_.Allow(peer_ip)) {
-    grpc::Status status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                        "Rate limit exceeded");
-    LogAuthEvent(peer_ip, "BeginAuth", status, "");
-    return status;
+    status = grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                          "Rate limit exceeded");
+  } else {
+    status = sasl_server_.BeginAuth(*request, response);
   }
-  grpc::Status status = sasl_server_.BeginAuth(*request, response);
+  metrics_.Record(peer_ip, "", status.ok());
   LogAuthEvent(peer_ip, "BeginAuth", status, "");
   return status;
 }
@@ -98,14 +99,16 @@ grpc::Status GatekeeperServiceImpl::FinishAuth(grpc::ServerContext* context,
                                                const FinishAuthRequest* request,
                                                FinishAuthResponse* response) {
   const std::string peer_ip = ExtractPeerIp(context);
+  grpc::Status status;
   if (!rate_limiter_.Allow(peer_ip)) {
-    grpc::Status status(grpc::StatusCode::RESOURCE_EXHAUSTED,
-                        "Rate limit exceeded");
-    LogAuthEvent(peer_ip, "FinishAuth", status, "");
-    return status;
+    status = grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                          "Rate limit exceeded");
+  } else {
+    status = sasl_server_.FinishAuth(*request, response);
   }
-  grpc::Status status = sasl_server_.FinishAuth(*request, response);
-  LogAuthEvent(peer_ip, "FinishAuth", status, response->user_uuid());
+  const std::string user_uuid = status.ok() ? response->user_uuid() : "";
+  metrics_.Record(peer_ip, user_uuid, status.ok());
+  LogAuthEvent(peer_ip, "FinishAuth", status, user_uuid);
   return status;
 }
 

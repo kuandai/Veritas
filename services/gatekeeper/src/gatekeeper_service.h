@@ -2,6 +2,7 @@
 
 #include <grpcpp/grpcpp.h>
 
+#include "auth_metrics.h"
 #include "gatekeeper.grpc.pb.h"
 #include "rate_limiter.h"
 #include "sasl_server.h"
@@ -24,6 +25,7 @@ class GatekeeperServiceImpl final : public Gatekeeper::Service {
  private:
   veritas::gatekeeper::SaslServer sasl_server_;
   veritas::gatekeeper::RateLimiter rate_limiter_;
+  veritas::gatekeeper::AuthMetrics metrics_;
 };
 
 }  // namespace veritas::auth::v1
