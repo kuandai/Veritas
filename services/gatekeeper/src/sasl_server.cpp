@@ -9,6 +9,7 @@
 
 #include <sasl/sasl.h>
 
+#include "secure_erase.h"
 #include "token_utils.h"
 
 namespace veritas::gatekeeper {
@@ -71,12 +72,15 @@ grpc::Status SaslServer::BeginAuth(
                        now + options_.session_ttl};
     session_cache_.Insert(session);
 
-    response->set_salt(fake_salt_.Generate(request.login_username()));
-    response->set_server_public(GenerateRandomBytes(32));
+    std::string salt = fake_salt_.Generate(request.login_username());
+    std::string server_public = GenerateRandomBytes(32);
+    response->set_salt(salt);
+    response->set_server_public(server_public);
     response->set_session_id(session_id);
     auto* params = response->mutable_params();
     params->set_group("rfc5054-4096");
     params->set_hash("sha256");
+    SecureErase(&server_public);
   } catch (const TokenStoreError& ex) {
     if (ex.kind() == TokenStoreError::Kind::Unavailable) {
       return grpc::Status(grpc::StatusCode::UNAVAILABLE, ex.what());
@@ -116,14 +120,15 @@ grpc::Status SaslServer::FinishAuth(
     const auto now = std::chrono::system_clock::now();
     const auto expires_at =
         now + std::chrono::hours(24 * options_.token_ttl_days);
-    const std::string refresh_token = GenerateRefreshToken();
+    std::string refresh_token = GenerateRefreshToken();
     const std::string token_hash = HashTokenSha256(refresh_token);
     const std::string user_uuid = "mock-" + session->session_id;
 
     TokenRecord record{token_hash, user_uuid, expires_at, false};
     token_store_->PutToken(record);
 
-    response->set_server_proof(GenerateRandomBytes(32));
+    std::string server_proof = GenerateRandomBytes(32);
+    response->set_server_proof(server_proof);
     response->set_user_uuid(user_uuid);
     response->set_refresh_token(refresh_token);
 
@@ -135,6 +140,13 @@ grpc::Status SaslServer::FinishAuth(
     ts->set_seconds(static_cast<int64_t>(seconds));
     ts->set_nanos(0);
     session_cache_.Erase(request.session_id());
+    SecureErase(&refresh_token);
+    SecureErase(&server_proof);
+  } catch (const TokenStoreError& ex) {
+    if (ex.kind() == TokenStoreError::Kind::Unavailable) {
+      return grpc::Status(grpc::StatusCode::UNAVAILABLE, ex.what());
+    }
+    return grpc::Status(grpc::StatusCode::INTERNAL, ex.what());
   } catch (const std::exception& ex) {
     return grpc::Status(grpc::StatusCode::INTERNAL, ex.what());
   }
