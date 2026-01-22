@@ -1,105 +1,105 @@
 # Codebase State (Current)
 
-This document summarizes the **current** state of the repository, with explicit
-labels for placeholders, incomplete implementations, and aspirational features.
+This document provides a current-state snapshot of the repository. Each section
+explicitly calls out **placeholders**, **incomplete implementations**, and
+**aspirational** items.
 
 ## Repository layout
 
-- `libveritas/`: C++ client library (currently skeletal).
+- `libveritas/`: C++ client library.
 - `services/`: backend services (Gatekeeper, Notary, shared utilities).
-- `protocol/`: Protobuf definitions and generated artifacts at build time.
-- `docs/`: project documentation (this file).
+- `protocol/`: Protobuf definitions (generated artifacts appear under
+  `build/protocol/`).
+- `docs/`: project documentation.
 
-## Build system
+## Build and tooling
 
-- CMake + Conan with C++20.
-- gRPC + Protobuf are configured via Conan and the protocol target generates
-  `.pb.*` + `.grpc.pb.*` outputs into `build/protocol/`.
+- CMake + Conan, C++20.
+- gRPC/Protobuf code generation is wired through the `protocol` target.
+- **Maintainability note (aspirational):** several CMake targets use
+  `file(GLOB_RECURSE ...)`. This is convenient for now but should be replaced
+  with explicit source lists over time.
 
-## Components
+## Component status
 
 ### libveritas (client library)
 
-Current state:
-- `IdentityManager` exists with basic callbacks and a placeholder
-  `get_quic_context()` that returns an empty `SecurityContext`.
+Implemented
+- `IdentityManager` type with basic callbacks.
 
-**Placeholders / incomplete**
-- `SecurityContext` is currently empty (`SSL_CTX*` only).
-- No transport integration, rotation, or certificate handling logic yet.
-- Callbacks are stored but never invoked.
+Placeholders / incomplete
+- `SecurityContext` is empty beyond an `SSL_CTX*`.
+- `get_quic_context()` returns a default/empty context.
+- Callbacks are stored but not invoked.
+- No certificate rotation or transport integration.
 
-**Aspirational**
-- A production `IdentityManager` that manages credentials, rotation, and client
-  TLS/QUIC contexts.
+Aspirational
+- Production-grade credential management, rotation, and TLS/QUIC integration.
 
 ### protocol (Protobuf)
 
-Current state:
-- `protocol/gatekeeper.proto` defines the Gatekeeper gRPC service and messages.
-- `protocol/identity.proto` contains a **placeholder** message.
+Implemented
+- `protocol/gatekeeper.proto` defines the Gatekeeper gRPC API.
 
-**Placeholders / incomplete**
-- `identity.proto` is explicitly a placeholder definition.
-- No protocol versioning or error model mapping beyond gRPC status codes.
+Placeholders / incomplete
+- `protocol/identity.proto` is explicitly a placeholder.
+- No explicit versioning or error model beyond gRPC status codes.
 
-**Aspirational**
-- Full protocol set for identity, token issuance, and notary services.
+Aspirational
+- Full protocol surface for identity, token issuance, and notary services.
 
 ### services/shared
 
-Current state:
-- `veritas_shared` library exposes a `shared_build_id()` string.
+Implemented
+- `veritas_shared` exposes a build-id helper.
 
-**Placeholders / incomplete**
-- No shared data access layer yet.
+Placeholders / incomplete
+- No shared data access layer.
 
-**Aspirational**
-- Shared DB access, token store adapters, metrics/logging utilities.
+Aspirational
+- Shared DB access, token store adapters, and metrics/logging utilities.
 
 ### services/notary
 
-Current state:
+Implemented
 - Minimal CLI that prints the shared build id.
 
-**Placeholders / incomplete**
+Placeholders / incomplete
 - No notary logic implemented.
 
-**Aspirational**
-- Notary service implementation with shared token store integration.
+Aspirational
+- Notary service with shared token store integration.
 
 ### services/gatekeeper (SASL service)
 
-Current state:
-- gRPC server bootstraps with TLS key/cert files from env config.
-- `BeginAuth` and `FinishAuth` handlers exist.
-- Per-IP rate limiting (5/min) is enforced.
-- Structured auth event logging (`timestamp`, `ip`, `action`, `status`,
-  `user_uuid?`) to stdout.
+Implemented
+- gRPC server bootstrapped with TLS cert/key from env config.
+- `BeginAuth` and `FinishAuth` handlers are present.
+- Per-IP rate limiting (5/minute).
+- Structured auth event logging to stdout (`timestamp`, `ip`, `action`,
+  `status`, `user_uuid?`).
 - In-memory auth analytics counters (success/failure per IP and UUID).
 - Mock SASL flow:
-  - Generates a deterministic fake salt (HMAC).
-  - Creates a session id and stores it in a TTL cache.
-  - Returns mock SRP parameters.
-  - Issues a refresh token (random bytes), hashes it with SHA-256, and stores
-    the record in an **in-memory** token store.
+  - Deterministic fake salt (HMAC).
+  - Session ids stored in a TTL cache.
+  - Mock SRP parameters returned.
+  - Refresh token issuance + SHA-256 hashing to an in-memory token store.
 
-**Placeholders / incomplete**
-- **SASL/SRP-6a is not implemented.** Current flow is a mock placeholder.
+Placeholders / incomplete
+- **SASL/SRP-6a is not implemented; current flow is a mock placeholder.**
 - Token store is in-memory only (no persistence).
 - No verifier lookup or proof validation.
-- TLS **is not** forced to TLS 1.3; no cert validation policy beyond loading
-  PEM files.
-- No gRPC error mapping beyond basic statuses returned in handlers.
-- No unit/integration tests for Gatekeeper.
+- TLS is not constrained to 1.3; no additional cert validation policy.
+- No gRPC error mapping beyond basic status returns.
+- No unit/integration tests.
 
-**Aspirational**
-- Full SRP-6a SASL handshake and verifier storage.
+Aspirational
+- Full SRP-6a handshake and verifier storage.
 - Redis-backed token store (shared with Notary).
 - TLS 1.3-only policy and hardened mTLS options.
-- Rate limiting + analytics exported as real metrics.
+- Exportable rate limiting and analytics metrics.
 
-## Summary of missing or incomplete features
+## Cross-cutting gaps (incomplete)
 
 - SRP/SASL handshake, verifier lookup, and proof verification.
 - Token store persistence and revocation flows.
@@ -107,7 +107,7 @@ Current state:
 - Shared storage layer and cross-service integration.
 - Tests for security-critical flows.
 
-## Notes
+## Scope note
 
 This document reflects **current code** only. Design documents in `.cache/`
-describe intended behavior; they are not yet fully implemented.
+describe intended behavior and are not fully implemented.
