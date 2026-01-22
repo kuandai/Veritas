@@ -17,7 +17,7 @@ int main() {
     grpc::SslServerCredentialsOptions ssl_opts;
     ssl_opts.pem_key_cert_pairs.push_back(key_cert);
 
-    veritas::auth::v1::GatekeeperServiceImpl service;
+  veritas::auth::v1::GatekeeperServiceImpl service(config.rate_limit_per_minute);
     grpc::ServerBuilder builder;
     builder.AddListeningPort(config.bind_addr,
                              grpc::SslServerCredentials(ssl_opts));

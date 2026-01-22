@@ -3,13 +3,14 @@
 #include <grpcpp/grpcpp.h>
 
 #include "gatekeeper.grpc.pb.h"
+#include "rate_limiter.h"
 #include "sasl_server.h"
 
 namespace veritas::auth::v1 {
 
 class GatekeeperServiceImpl final : public Gatekeeper::Service {
  public:
-  GatekeeperServiceImpl() = default;
+  explicit GatekeeperServiceImpl(int rate_limit_per_minute);
 
   grpc::Status BeginAuth(grpc::ServerContext* context,
                          const BeginAuthRequest* request,
@@ -21,6 +22,7 @@ class GatekeeperServiceImpl final : public Gatekeeper::Service {
 
  private:
   veritas::gatekeeper::SaslServer sasl_server_;
+  veritas::gatekeeper::RateLimiter rate_limiter_;
 };
 
 }  // namespace veritas::auth::v1
