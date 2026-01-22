@@ -1,7 +1,9 @@
 #include "sasl_server.h"
 
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <string>
 #include <stdexcept>
 #include <utility>
 
@@ -19,7 +21,13 @@ namespace veritas::gatekeeper {
 namespace {
 
 std::once_flag g_sasl_init_once;
-grpc::Status g_sasl_init_status = grpc::Status::OK;
+#if defined(VERITAS_DISABLE_SASL)
+constexpr int kSaslOk = 0;
+#else
+constexpr int kSaslOk = SASL_OK;
+#endif
+std::atomic<int> g_sasl_init_result{kSaslOk};
+std::string g_sasl_init_error;
 
 std::string GenerateRandomBytes(std::size_t length) {
   return GenerateRefreshToken(length);
@@ -52,8 +60,8 @@ void SaslServer::EnsureInitialized() {
   std::call_once(g_sasl_init_once, []() {
     const int result = sasl_server_init(nullptr, "veritas_gatekeeper");
     if (result != SASL_OK) {
-      g_sasl_init_status = grpc::Status(grpc::StatusCode::INTERNAL,
-                                        "SASL initialization failed");
+      g_sasl_init_result.store(result);
+      g_sasl_init_error = "SASL initialization failed";
       return;
     }
   });
@@ -65,8 +73,8 @@ grpc::Status SaslServer::BeginAuth(
     veritas::auth::v1::BeginAuthResponse* response) {
   if (!options_.skip_sasl_init) {
     EnsureInitialized();
-    if (!g_sasl_init_status.ok()) {
-      return g_sasl_init_status;
+    if (g_sasl_init_result.load() != kSaslOk) {
+      return grpc::Status(grpc::StatusCode::INTERNAL, g_sasl_init_error);
     }
   }
   if (request.login_username().empty()) {
@@ -108,8 +116,8 @@ grpc::Status SaslServer::FinishAuth(
     veritas::auth::v1::FinishAuthResponse* response) {
   if (!options_.skip_sasl_init) {
     EnsureInitialized();
-    if (!g_sasl_init_status.ok()) {
-      return g_sasl_init_status;
+    if (g_sasl_init_result.load() != kSaslOk) {
+      return grpc::Status(grpc::StatusCode::INTERNAL, g_sasl_init_error);
     }
   }
   if (request.session_id().empty()) {
