@@ -1,10 +1,10 @@
-# Codebase State (Current)
+# Current State
 
-This document provides a current-state snapshot of the repository. Each section
-explicitly calls out **placeholders**, **incomplete implementations**, and
-**aspirational** items.
+Snapshot of the repository as implemented today. Each section explicitly calls
+out **placeholders**, **incomplete implementations**, and **aspirational**
+items.
 
-## Repository layout
+## Repository layout (summary)
 
 - `libveritas/`: C++ client library.
 - `services/`: backend services (Gatekeeper, Notary, shared utilities).
@@ -16,11 +16,10 @@ explicitly calls out **placeholders**, **incomplete implementations**, and
 
 - CMake + Conan, C++20.
 - gRPC/Protobuf code generation is wired through the `protocol` target.
-- **Maintainability note (aspirational):** several CMake targets use
-  `file(GLOB_RECURSE ...)`. This is convenient for now but should be replaced
-  with explicit source lists over time.
+**Aspirational:** replace `file(GLOB_RECURSE ...)` with explicit source lists
+as the codebase stabilizes.
 
-## Component status
+## Component status (summary)
 
 ### libveritas (client library)
 
