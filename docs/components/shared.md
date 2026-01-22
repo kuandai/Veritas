@@ -11,7 +11,8 @@ Notary (e.g., token store, metrics, logging).
 
 ## Placeholders / incomplete
 
-- No shared data access layer.
+- No shared data access layer. Token store is still implemented in the
+  Gatekeeper service (not yet factored into shared code).
 
 ## Aspirational
 

@@ -82,29 +82,33 @@ Implemented
   - Deterministic fake salt (HMAC).
   - Session ids stored in a TTL cache.
   - Mock SRP parameters returned.
-  - Refresh token issuance + SHA-256 hashing to an in-memory token store.
+  - Refresh token issuance + SHA-256 hashing, persisted to Redis when
+    `TOKEN_STORE_URI` is set (in-memory fallback otherwise).
 
 Placeholders / incomplete
 - **SASL/SRP-6a is not implemented; current flow is a mock placeholder.**
-- Token store is in-memory only (no persistence).
+- Redis token store adapter exists; persistence is optional via
+  `TOKEN_STORE_URI` (in-memory fallback otherwise).
+- Redis TLS (`rediss://`) is not supported yet.
 - No verifier lookup or proof validation.
 - TLS is not constrained to 1.3; no additional cert validation policy.
 - No gRPC error mapping beyond basic status returns.
-- No unit/integration tests.
+- Unit tests exist for fake salt, token hashing, and rate limiting; integration
+  tests are still missing.
 
 Aspirational
 - Full SRP-6a handshake and verifier storage.
-- Redis-backed token store (shared with Notary).
+- Redis-backed token store shared with Notary.
 - TLS 1.3-only policy and hardened mTLS options.
 - Exportable rate limiting and analytics metrics.
 
 ## Cross-cutting gaps (incomplete)
 
 - SRP/SASL handshake, verifier lookup, and proof verification.
-- Token store persistence and revocation flows.
+- Token store persistence and revocation flows (beyond current Redis adapter).
 - TLS 1.3 enforcement and stronger certificate validation.
 - Shared storage layer and cross-service integration.
-- Tests for security-critical flows.
+- Integration tests for security-critical flows.
 
 ## Scope note
 
