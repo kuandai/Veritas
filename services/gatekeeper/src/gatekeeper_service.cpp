@@ -1,5 +1,10 @@
 #include "gatekeeper_service.h"
 
+#include <chrono>
+#include <ctime>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
 #include <string_view>
 
 namespace veritas::auth::v1 {
@@ -36,6 +41,35 @@ std::string ExtractPeerIp(const grpc::ServerContext* context) {
   return "unknown";
 }
 
+std::string FormatTimestamp(std::chrono::system_clock::time_point now) {
+  const std::time_t time = std::chrono::system_clock::to_time_t(now);
+  std::tm utc_time{};
+#if defined(_WIN32)
+  gmtime_s(&utc_time, &time);
+#else
+  gmtime_r(&time, &utc_time);
+#endif
+  std::ostringstream stream;
+  stream << std::put_time(&utc_time, "%Y-%m-%dT%H:%M:%SZ");
+  return stream.str();
+}
+
+void LogAuthEvent(std::string_view ip,
+                  std::string_view action,
+                  const grpc::Status& status,
+                  std::string_view user_uuid) {
+  std::ostringstream stream;
+  stream << "{"
+         << "\"timestamp\":\"" << FormatTimestamp(std::chrono::system_clock::now())
+         << "\",\"ip\":\"" << ip << "\",\"action\":\"" << action
+         << "\",\"status\":\"" << status.error_code() << "\"";
+  if (!user_uuid.empty()) {
+    stream << ",\"user_uuid\":\"" << user_uuid << "\"";
+  }
+  stream << "}";
+  std::cout << stream.str() << std::endl;
+}
+
 }  // namespace
 
 GatekeeperServiceImpl::GatekeeperServiceImpl(int rate_limit_per_minute)
@@ -46,10 +80,14 @@ grpc::Status GatekeeperServiceImpl::BeginAuth(grpc::ServerContext* context,
                                               BeginAuthResponse* response) {
   const std::string peer_ip = ExtractPeerIp(context);
   if (!rate_limiter_.Allow(peer_ip)) {
-    return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+    grpc::Status status(grpc::StatusCode::RESOURCE_EXHAUSTED,
                         "Rate limit exceeded");
+    LogAuthEvent(peer_ip, "BeginAuth", status, "");
+    return status;
   }
-  return sasl_server_.BeginAuth(*request, response);
+  grpc::Status status = sasl_server_.BeginAuth(*request, response);
+  LogAuthEvent(peer_ip, "BeginAuth", status, "");
+  return status;
 }
 
 grpc::Status GatekeeperServiceImpl::FinishAuth(grpc::ServerContext* context,
@@ -57,10 +95,14 @@ grpc::Status GatekeeperServiceImpl::FinishAuth(grpc::ServerContext* context,
                                                FinishAuthResponse* response) {
   const std::string peer_ip = ExtractPeerIp(context);
   if (!rate_limiter_.Allow(peer_ip)) {
-    return grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+    grpc::Status status(grpc::StatusCode::RESOURCE_EXHAUSTED,
                         "Rate limit exceeded");
+    LogAuthEvent(peer_ip, "FinishAuth", status, "");
+    return status;
   }
-  return sasl_server_.FinishAuth(*request, response);
+  grpc::Status status = sasl_server_.FinishAuth(*request, response);
+  LogAuthEvent(peer_ip, "FinishAuth", status, response->user_uuid());
+  return status;
 }
 
 }  // namespace veritas::auth::v1
