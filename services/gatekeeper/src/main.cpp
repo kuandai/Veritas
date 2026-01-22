@@ -17,7 +17,12 @@ int main() {
     grpc::SslServerCredentialsOptions ssl_opts;
     ssl_opts.pem_key_cert_pairs.push_back(key_cert);
 
-  veritas::auth::v1::GatekeeperServiceImpl service(config.rate_limit_per_minute);
+    veritas::gatekeeper::SaslServerOptions sasl_options;
+    sasl_options.fake_salt_secret = config.fake_salt_secret;
+    sasl_options.token_ttl_days = config.token_ttl_days;
+
+    veritas::auth::v1::GatekeeperServiceImpl service(
+        config.rate_limit_per_minute, sasl_options);
     grpc::ServerBuilder builder;
     builder.AddListeningPort(config.bind_addr,
                              grpc::SslServerCredentials(ssl_opts));

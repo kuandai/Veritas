@@ -10,7 +10,8 @@ namespace veritas::auth::v1 {
 
 class GatekeeperServiceImpl final : public Gatekeeper::Service {
  public:
-  explicit GatekeeperServiceImpl(int rate_limit_per_minute);
+  GatekeeperServiceImpl(int rate_limit_per_minute,
+                        veritas::gatekeeper::SaslServerOptions options);
 
   grpc::Status BeginAuth(grpc::ServerContext* context,
                          const BeginAuthRequest* request,

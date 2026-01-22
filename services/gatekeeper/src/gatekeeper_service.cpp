@@ -6,6 +6,7 @@
 #include <iostream>
 #include <sstream>
 #include <string_view>
+#include <utility>
 
 namespace veritas::auth::v1 {
 
@@ -72,8 +73,11 @@ void LogAuthEvent(std::string_view ip,
 
 }  // namespace
 
-GatekeeperServiceImpl::GatekeeperServiceImpl(int rate_limit_per_minute)
-    : rate_limiter_(rate_limit_per_minute, std::chrono::seconds(60)) {}
+GatekeeperServiceImpl::GatekeeperServiceImpl(
+    int rate_limit_per_minute,
+    veritas::gatekeeper::SaslServerOptions options)
+    : sasl_server_(std::move(options)),
+      rate_limiter_(rate_limit_per_minute, std::chrono::seconds(60)) {}
 
 grpc::Status GatekeeperServiceImpl::BeginAuth(grpc::ServerContext* context,
                                               const BeginAuthRequest* request,
