@@ -13,7 +13,7 @@ bool RateLimiter::Allow(const std::string& key) {
   const auto now = std::chrono::system_clock::now();
   std::lock_guard<std::mutex> lock(mutex_);
   auto& events = buckets_[key];
-  CleanupLocked(key, &events, now);
+  CleanupLocked(&events, now);
   if (static_cast<int>(events.size()) >= max_events_) {
     return false;
   }
@@ -22,15 +22,11 @@ bool RateLimiter::Allow(const std::string& key) {
 }
 
 void RateLimiter::CleanupLocked(
-    const std::string& key,
     std::deque<std::chrono::system_clock::time_point>* events,
     std::chrono::system_clock::time_point now) {
   const auto cutoff = now - window_;
   while (!events->empty() && events->front() <= cutoff) {
     events->pop_front();
-  }
-  if (events->empty()) {
-    buckets_.erase(key);
   }
 }
 

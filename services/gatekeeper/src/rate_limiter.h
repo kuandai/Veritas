@@ -15,8 +15,7 @@ class RateLimiter {
   bool Allow(const std::string& key);
 
  private:
-  void CleanupLocked(const std::string& key,
-                     std::deque<std::chrono::system_clock::time_point>* events,
+  void CleanupLocked(std::deque<std::chrono::system_clock::time_point>* events,
                      std::chrono::system_clock::time_point now);
 
   int max_events_;
