@@ -6,6 +6,7 @@
 
 #include "config.h"
 #include "gatekeeper_service.h"
+#include "token_store.h"
 
 int main() {
   try {
@@ -20,6 +21,10 @@ int main() {
     veritas::gatekeeper::SaslServerOptions sasl_options;
     sasl_options.fake_salt_secret = config.fake_salt_secret;
     sasl_options.token_ttl_days = config.token_ttl_days;
+    if (!config.token_store_uri.empty()) {
+      sasl_options.token_store = std::make_shared<veritas::gatekeeper::RedisTokenStore>(
+          config.token_store_uri);
+    }
 
     veritas::auth::v1::GatekeeperServiceImpl service(
         config.rate_limit_per_minute, sasl_options);

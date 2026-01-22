@@ -1,8 +1,10 @@
 #pragma once
 
 #include <chrono>
+#include <memory>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 
@@ -24,6 +26,20 @@ class TokenStore {
   virtual void RevokeUser(const std::string& user_uuid) = 0;
 };
 
+class TokenStoreError : public std::runtime_error {
+ public:
+  enum class Kind {
+    Unavailable,
+  };
+
+  TokenStoreError(Kind kind, const std::string& message);
+
+  Kind kind() const noexcept { return kind_; }
+
+ private:
+  Kind kind_;
+};
+
 class InMemoryTokenStore final : public TokenStore {
  public:
   void PutToken(const TokenRecord& record) override;
@@ -33,6 +49,19 @@ class InMemoryTokenStore final : public TokenStore {
  private:
   std::mutex mutex_;
   std::unordered_map<std::string, TokenRecord> tokens_;
+};
+
+class RedisTokenStore final : public TokenStore {
+ public:
+  explicit RedisTokenStore(std::string uri);
+
+  void PutToken(const TokenRecord& record) override;
+  std::optional<TokenRecord> GetToken(const std::string& token_hash) override;
+  void RevokeUser(const std::string& user_uuid) override;
+
+ private:
+  std::string uri_;
+  std::unique_ptr<class RedisClient> redis_;
 };
 
 }  // namespace veritas::gatekeeper

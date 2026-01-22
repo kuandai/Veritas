@@ -16,6 +16,7 @@ struct SaslServerOptions {
   std::string fake_salt_secret;
   std::chrono::seconds session_ttl{std::chrono::minutes(10)};
   int token_ttl_days = 30;
+  std::shared_ptr<TokenStore> token_store;
 };
 
 class SaslServer {
@@ -34,7 +35,7 @@ class SaslServer {
   SaslServerOptions options_;
   SessionCache session_cache_;
   FakeSaltGenerator fake_salt_;
-  InMemoryTokenStore token_store_;
+  std::shared_ptr<TokenStore> token_store_;
 };
 
 }  // namespace veritas::gatekeeper

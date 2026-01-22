@@ -15,6 +15,11 @@ if(GATEKEEPER_SOURCES)
     message(FATAL_ERROR "gRPC package not found; verify Conan gRPC installation.")
   endif()
 
+  find_package(redis-plus-plus QUIET CONFIG)
+  if(NOT redis-plus-plus_FOUND)
+    message(FATAL_ERROR "redis-plus-plus package not found; verify Conan installation.")
+  endif()
+
   set(GRPC_CPP_TARGET "")
   if(TARGET gRPC::grpc++)
     set(GRPC_CPP_TARGET gRPC::grpc++)
@@ -24,6 +29,15 @@ if(GATEKEEPER_SOURCES)
 
   if(NOT GRPC_CPP_TARGET)
     message(FATAL_ERROR "gRPC C++ target not found in the current toolchain.")
+  endif()
+
+  set(REDIS_CPP_TARGET "")
+  if(TARGET redis-plus-plus::redis-plus-plus)
+    set(REDIS_CPP_TARGET redis-plus-plus::redis-plus-plus)
+  endif()
+
+  if(NOT REDIS_CPP_TARGET)
+    message(FATAL_ERROR "redis-plus-plus C++ target not found in the current toolchain.")
   endif()
 
   add_executable(veritas_gatekeeper ${GATEKEEPER_SOURCES})
@@ -36,6 +50,7 @@ if(GATEKEEPER_SOURCES)
       veritas_shared
       veritas_protocol
       ${GRPC_CPP_TARGET}
+      ${REDIS_CPP_TARGET}
       OpenSSL::Crypto
   )
   target_compile_features(veritas_gatekeeper PRIVATE cxx_std_20)

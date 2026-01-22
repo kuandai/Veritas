@@ -2,8 +2,6 @@
 
 #include <array>
 #include <chrono>
-#include <iomanip>
-#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -20,21 +18,12 @@ namespace {
 std::once_flag g_sasl_init_once;
 grpc::Status g_sasl_init_status = grpc::Status::OK;
 
-std::string HexEncode(const std::string& data) {
-  std::ostringstream stream;
-  stream << std::hex << std::setfill('0');
-  for (unsigned char byte : data) {
-    stream << std::setw(2) << static_cast<int>(byte);
-  }
-  return stream.str();
-}
-
 std::string GenerateRandomBytes(std::size_t length) {
   return GenerateRefreshToken(length);
 }
 
 std::string GenerateSessionId() {
-  return HexEncode(GenerateRandomBytes(16));
+  return HexEncodeBytes(GenerateRandomBytes(16));
 }
 
 }  // namespace
@@ -43,6 +32,11 @@ SaslServer::SaslServer(SaslServerOptions options)
     : options_(std::move(options)),
       session_cache_(options_.session_ttl),
       fake_salt_(options_.fake_salt_secret) {
+  if (options_.token_store) {
+    token_store_ = std::move(options_.token_store);
+  } else {
+    token_store_ = std::make_shared<InMemoryTokenStore>();
+  }
   EnsureInitialized();
 }
 
@@ -83,6 +77,11 @@ grpc::Status SaslServer::BeginAuth(
     auto* params = response->mutable_params();
     params->set_group("rfc5054-4096");
     params->set_hash("sha256");
+  } catch (const TokenStoreError& ex) {
+    if (ex.kind() == TokenStoreError::Kind::Unavailable) {
+      return grpc::Status(grpc::StatusCode::UNAVAILABLE, ex.what());
+    }
+    return grpc::Status(grpc::StatusCode::INTERNAL, ex.what());
   } catch (const std::exception& ex) {
     return grpc::Status(grpc::StatusCode::INTERNAL, ex.what());
   }
@@ -122,7 +121,7 @@ grpc::Status SaslServer::FinishAuth(
     const std::string user_uuid = "mock-" + session->session_id;
 
     TokenRecord record{token_hash, user_uuid, expires_at, false};
-    token_store_.PutToken(record);
+    token_store_->PutToken(record);
 
     response->set_server_proof(GenerateRandomBytes(32));
     response->set_user_uuid(user_uuid);
