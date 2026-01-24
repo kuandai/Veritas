@@ -12,11 +12,20 @@
 
 namespace veritas::gatekeeper {
 
+struct SaslContext;
+
 struct SaslServerOptions {
   std::string fake_salt_secret;
   std::chrono::seconds session_ttl{std::chrono::minutes(10)};
   int token_ttl_days = 30;
   std::shared_ptr<TokenStore> token_store;
+  bool enable_sasl = true;
+  std::string sasl_service = "veritas_gatekeeper";
+  std::string sasl_mech_list = "SRP";
+  std::string sasl_conf_path;
+  std::string sasl_plugin_path;
+  std::string sasl_dbname;
+  std::string sasl_realm;
   bool skip_sasl_init = false;
 };
 
@@ -32,11 +41,13 @@ class SaslServer {
 
  private:
   void EnsureInitialized();
+  bool UseSasl() const;
 
   SaslServerOptions options_;
   SessionCache session_cache_;
   FakeSaltGenerator fake_salt_;
   std::shared_ptr<TokenStore> token_store_;
+  std::unique_ptr<SaslContext> sasl_context_;
 };
 
 }  // namespace veritas::gatekeeper

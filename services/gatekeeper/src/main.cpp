@@ -21,6 +21,13 @@ int main() {
     veritas::gatekeeper::SaslServerOptions sasl_options;
     sasl_options.fake_salt_secret = config.fake_salt_secret;
     sasl_options.token_ttl_days = config.token_ttl_days;
+    sasl_options.enable_sasl = config.enable_sasl;
+    sasl_options.sasl_service = config.sasl_service;
+    sasl_options.sasl_mech_list = config.sasl_mech_list;
+    sasl_options.sasl_conf_path = config.sasl_conf_path;
+    sasl_options.sasl_plugin_path = config.sasl_plugin_path;
+    sasl_options.sasl_dbname = config.sasl_dbname;
+    sasl_options.sasl_realm = config.sasl_realm;
     if (!config.token_store_uri.empty()) {
       sasl_options.token_store = std::make_shared<veritas::gatekeeper::RedisTokenStore>(
           config.token_store_uri);

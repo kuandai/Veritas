@@ -1,6 +1,21 @@
 #include "session_cache.h"
 
+#if !defined(VERITAS_DISABLE_SASL)
+#include <sasl/sasl.h>
+#endif
+
 namespace veritas::gatekeeper {
+
+SaslConnection::SaslConnection(sasl_conn* conn) : conn_(conn) {}
+
+SaslConnection::~SaslConnection() {
+#if !defined(VERITAS_DISABLE_SASL)
+  if (conn_) {
+    sasl_dispose(&conn_);
+  }
+#endif
+  conn_ = nullptr;
+}
 
 SessionCache::SessionCache(std::chrono::seconds ttl) : ttl_(ttl) {}
 

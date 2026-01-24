@@ -2,6 +2,8 @@
 
 #include <cstdlib>
 #include <fstream>
+#include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <stdexcept>
 
@@ -22,6 +24,23 @@ int GetEnvOrDefaultInt(const char* name, int fallback) {
   return std::stoi(value);
 }
 
+bool GetEnvOrDefaultBool(const char* name, bool fallback) {
+  const char* value = std::getenv(name);
+  if (!value || value[0] == '\0') {
+    return fallback;
+  }
+  std::string normalized(value);
+  std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                 [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+  if (normalized == "1" || normalized == "true" || normalized == "yes") {
+    return true;
+  }
+  if (normalized == "0" || normalized == "false" || normalized == "no") {
+    return false;
+  }
+  return fallback;
+}
+
 }  // namespace
 
 GatekeeperConfig LoadConfig() {
@@ -33,6 +52,20 @@ GatekeeperConfig LoadConfig() {
   config.rate_limit_per_minute = GetEnvOrDefaultInt("RATE_LIMIT", 5);
   config.token_store_uri = GetEnvOrEmpty("TOKEN_STORE_URI");
   config.fake_salt_secret = GetEnvOrEmpty("FAKE_SALT_SECRET");
+  config.enable_sasl = GetEnvOrDefaultBool("SASL_ENABLE", true);
+
+  const auto sasl_service = GetEnvOrEmpty("SASL_SERVICE");
+  if (!sasl_service.empty()) {
+    config.sasl_service = sasl_service;
+  }
+  const auto sasl_mech_list = GetEnvOrEmpty("SASL_MECH_LIST");
+  if (!sasl_mech_list.empty()) {
+    config.sasl_mech_list = sasl_mech_list;
+  }
+  config.sasl_conf_path = GetEnvOrEmpty("SASL_CONF_PATH");
+  config.sasl_plugin_path = GetEnvOrEmpty("SASL_PLUGIN_PATH");
+  config.sasl_dbname = GetEnvOrEmpty("SASL_DBNAME");
+  config.sasl_realm = GetEnvOrEmpty("SASL_REALM");
 
   if (config.bind_addr.empty()) {
     throw std::runtime_error("BIND_ADDR is required");

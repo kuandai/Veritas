@@ -12,6 +12,13 @@ struct GatekeeperConfig {
   int rate_limit_per_minute = 5;
   std::string token_store_uri;
   std::string fake_salt_secret;
+  bool enable_sasl = true;
+  std::string sasl_service = "veritas_gatekeeper";
+  std::string sasl_mech_list = "SRP";
+  std::string sasl_conf_path;
+  std::string sasl_plugin_path;
+  std::string sasl_dbname;
+  std::string sasl_realm;
 };
 
 GatekeeperConfig LoadConfig();
