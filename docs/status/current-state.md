@@ -78,33 +78,33 @@ Implemented
 - Structured auth event logging to stdout (`timestamp`, `ip`, `action`,
   `status`, `user_uuid?`).
 - In-memory auth analytics counters (success/failure per IP and UUID).
-- Mock SASL flow:
-  - Deterministic fake salt (HMAC).
+- SASL SRP-6a handshake via Cyrus SASL:
+  - SASL server challenge returned in `server_public` (opaque payload).
+  - Deterministic fake salts for unknown users.
+  - SASL server final payload returned in `server_proof`.
   - Session ids stored in a TTL cache.
-  - Mock SRP parameters returned.
   - Refresh token issuance + SHA-256 hashing, persisted to Redis when
     `TOKEN_STORE_URI` is set (in-memory fallback otherwise).
 
 Placeholders / incomplete
-- **SASL/SRP-6a is not implemented; current flow is a mock placeholder.**
+- SASL verifier provisioning depends on external sasldb/auxprop setup.
 - Redis token store adapter exists; persistence is optional via
   `TOKEN_STORE_URI` (in-memory fallback otherwise).
 - Redis TLS (`rediss://`) is not supported yet.
-- No verifier lookup or proof validation.
 - TLS is not constrained to 1.3; no additional cert validation policy.
-- No gRPC error mapping beyond basic status returns.
+- SASL error mapping is limited to a minimal gRPC status translation.
 - Unit tests exist for fake salt, token hashing, and rate limiting; integration
   tests are still missing.
 
 Aspirational
-- Full SRP-6a handshake and verifier storage.
+- Streamlined SRP verifier provisioning and server-side rotation policy.
 - Redis-backed token store shared with Notary.
 - TLS 1.3-only policy and hardened mTLS options.
 - Exportable rate limiting and analytics metrics.
 
 ## Cross-cutting gaps (incomplete)
 
-- SRP/SASL handshake, verifier lookup, and proof verification.
+- SASL verifier provisioning and end-to-end SRP integration tests.
 - Token store persistence and revocation flows (beyond current Redis adapter).
 - TLS 1.3 enforcement and stronger certificate validation.
 - Shared storage layer and cross-service integration.
