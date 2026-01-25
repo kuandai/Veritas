@@ -9,6 +9,12 @@ Define gRPC/Protobuf interfaces for services.
 - `protocol/gatekeeper.proto`: Gatekeeper gRPC service and messages.
 - `protocol/identity.proto`: **placeholder** message.
 
+Gatekeeper payload semantics (current implementation):
+- `BeginAuthResponse.server_public` carries the SASL SRP server challenge
+  payload; `salt` is only populated for deterministic fake responses.
+- `FinishAuthRequest.client_proof` and `FinishAuthResponse.server_proof` carry
+  the SASL SRP proof/final payloads.
+
 ## Placeholders / incomplete
 
 - `identity.proto` is explicitly a placeholder.

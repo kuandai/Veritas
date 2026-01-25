@@ -36,6 +36,7 @@ SASL behavior is controlled by environment variables:
 - `SASL_PLUGIN_PATH` (optional)
 - `SASL_DBNAME` (optional, sasldb path)
 - `SASL_REALM` (optional)
+- `SASL_ENABLE=false` forces a mock handshake (intended for tests only).
 
 ## Placeholders / incomplete
 
