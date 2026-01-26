@@ -28,7 +28,6 @@ if(VERITAS_ENABLE_PROTO_TESTS)
   find_package(cyrus-sasl REQUIRED CONFIG)
   list(APPEND VERITAS_TEST_SOURCES
     gatekeeper/sasl_server_test.cpp
-    ${CMAKE_BINARY_DIR}/protocol/gatekeeper.pb.cc
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/sasl_server.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/session_cache.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_store.cpp
@@ -52,6 +51,7 @@ target_link_libraries(veritas_gatekeeper_tests
 if(VERITAS_ENABLE_PROTO_TESTS)
   target_link_libraries(veritas_gatekeeper_tests
     PRIVATE
+      veritas_protocol
       protobuf::libprotobuf
       gRPC::grpc++
   )
@@ -73,7 +73,6 @@ if(VERITAS_ENABLE_PROTO_TESTS)
   set(VERITAS_INTEGRATION_TEST_SOURCES
     main.cpp
     gatekeeper/sasl_integration_test.cpp
-    ${CMAKE_BINARY_DIR}/protocol/gatekeeper.pb.cc
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/fake_salt.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/sasl_server.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/secure_erase.cpp
@@ -96,6 +95,7 @@ if(VERITAS_ENABLE_PROTO_TESTS)
     PRIVATE
       GTest::gtest
       OpenSSL::Crypto
+      veritas_protocol
       protobuf::libprotobuf
       gRPC::grpc++
       cyrus-sasl::cyrus-sasl
@@ -114,4 +114,52 @@ if(VERITAS_ENABLE_PROTO_TESTS)
   add_dependencies(veritas_gatekeeper_integration_tests veritas_protocol)
   add_test(NAME veritas_gatekeeper_integration_tests
            COMMAND veritas_gatekeeper_integration_tests)
+
+  set(VERITAS_LIBVERITAS_TEST_SOURCES
+    main.cpp
+    libveritas/secure_string_test.cpp
+    libveritas/sasl_client_test.cpp
+    libveritas/auth_flow_integration_test.cpp
+    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/auth_metrics.cpp
+    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/fake_salt.cpp
+    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/gatekeeper_service.cpp
+    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/rate_limiter.cpp
+    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/sasl_server.cpp
+    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/secure_erase.cpp
+    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/session_cache.cpp
+    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_store.cpp
+    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_utils.cpp
+  )
+
+  add_executable(veritas_libveritas_tests ${VERITAS_LIBVERITAS_TEST_SOURCES})
+
+  target_include_directories(veritas_libveritas_tests
+    PRIVATE
+      ${CMAKE_SOURCE_DIR}/libveritas/src
+      ${CMAKE_SOURCE_DIR}/services/gatekeeper/src
+      ${CMAKE_BINARY_DIR}/protocol
+  )
+
+  target_link_libraries(veritas_libveritas_tests
+    PRIVATE
+      veritas
+      GTest::gtest
+      OpenSSL::Crypto
+      protobuf::libprotobuf
+      gRPC::grpc++
+      cyrus-sasl::cyrus-sasl
+  )
+
+  target_compile_features(veritas_libveritas_tests
+    PRIVATE
+      cxx_std_20
+  )
+
+  target_compile_definitions(veritas_libveritas_tests
+    PRIVATE
+      VERITAS_DISABLE_REDIS
+  )
+
+  add_dependencies(veritas_libveritas_tests veritas_protocol)
+  add_test(NAME veritas_libveritas_tests COMMAND veritas_libveritas_tests)
 endif()
