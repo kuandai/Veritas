@@ -57,8 +57,9 @@ SASL behavior is controlled by environment variables:
 - Redis TLS (`rediss://`) is not supported yet.
 - gRPC error mapping is limited to current SASL status handling.
 - Unit tests cover fake salt, token hashing, rate limiting, config validation,
-  TLS credential validation, token store behavior, and session cache handling;
-  integration tests are still missing.
+  TLS credential validation, token store behavior, and session cache handling.
+- Integration tests cover SRP handshake happy path + invalid proof (skipped
+  if SRP is unavailable in the SASL build).
 
 ## Aspirational
 

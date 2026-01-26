@@ -96,8 +96,9 @@ Placeholders / incomplete
 - Redis TLS (`rediss://`) is not supported yet.
 - SASL error mapping is limited to a minimal gRPC status translation.
 - Unit tests cover fake salt, token hashing, rate limiting, config validation,
-  TLS credential validation, token store behavior, and session cache handling;
-  integration tests are still missing.
+  TLS credential validation, token store behavior, and session cache handling.
+- Integration tests cover SRP handshake happy path + invalid proof (skipped
+  if SRP is unavailable in the SASL build).
 
 Aspirational
 - Streamlined SRP verifier provisioning and server-side rotation policy.
