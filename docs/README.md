@@ -6,6 +6,7 @@ to separate architecture, component docs, protocols, and status snapshots.
 ## Index
 
 - `architecture/overview.md`: system-level overview and boundaries.
+- `build.md`: build instructions (including SRP-enabled SASL recipe).
 - `components/`
   - `components/gatekeeper.md`
   - `components/notary.md`
