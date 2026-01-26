@@ -24,13 +24,16 @@ as the codebase stabilizes.
 ### libveritas (client library)
 
 Implemented
-- `IdentityManager` type with basic callbacks.
+- `IdentityManager` type with basic callbacks and an SRP auth API.
+- `AuthFlow`, `GatekeeperClient`, and `SaslClient` for SRP-6a login via Gatekeeper.
+- Password buffers are scrubbed with `sodium_memzero` in the SASL client.
 
 Placeholders / incomplete
 - `SecurityContext` is empty beyond an `SSL_CTX*`.
 - `get_quic_context()` returns a default/empty context.
 - Callbacks are stored but not invoked.
 - No certificate rotation or transport integration.
+- No client-side token persistence or refresh scheduling.
 
 Aspirational
 - Production-grade credential management, rotation, and TLS/QUIC integration.
@@ -107,7 +110,8 @@ Aspirational
 
 ## Cross-cutting gaps (incomplete)
 
-- SASL verifier provisioning and end-to-end SRP integration tests.
+- SASL verifier provisioning (still external sasldb/auxprop tooling).
+- SRP integration tests exist but are skipped when SRP is unavailable in the SASL build.
 - Token store persistence and revocation flows (beyond current Redis adapter).
 - Shared storage layer and cross-service integration.
 - Integration tests for security-critical flows.
