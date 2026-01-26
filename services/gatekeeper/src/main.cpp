@@ -1,11 +1,16 @@
 #include <exception>
 #include <iostream>
 #include <memory>
+#include <vector>
 
 #include <grpcpp/grpcpp.h>
+#include <grpcpp/security/server_credentials.h>
+#include <grpcpp/security/tls_certificate_provider.h>
+#include <grpcpp/security/tls_credentials_options.h>
 
 #include "config.h"
 #include "gatekeeper_service.h"
+#include "tls_utils.h"
 #include "token_store.h"
 
 int main() {
@@ -13,10 +18,32 @@ int main() {
     const auto config = veritas::gatekeeper::LoadConfig();
     const auto cert = veritas::gatekeeper::ReadFile(config.tls_cert_path);
     const auto key = veritas::gatekeeper::ReadFile(config.tls_key_path);
+    std::string ca_bundle;
+    if (!config.tls_ca_path.empty()) {
+      ca_bundle = veritas::gatekeeper::ReadFile(config.tls_ca_path);
+    }
 
-    grpc::SslServerCredentialsOptions::PemKeyCertPair key_cert{key, cert};
-    grpc::SslServerCredentialsOptions ssl_opts;
-    ssl_opts.pem_key_cert_pairs.push_back(key_cert);
+    veritas::gatekeeper::ValidateTlsCredentials(cert, key, ca_bundle);
+
+    grpc::experimental::IdentityKeyCertPair key_cert_pair{key, cert};
+    auto provider =
+        std::make_shared<grpc::experimental::StaticDataCertificateProvider>(
+            ca_bundle,
+            std::vector<grpc::experimental::IdentityKeyCertPair>{key_cert_pair});
+
+    grpc::experimental::TlsServerCredentialsOptions tls_opts(provider);
+    tls_opts.watch_identity_key_cert_pairs();
+    if (!ca_bundle.empty()) {
+      tls_opts.watch_root_certs();
+    }
+    tls_opts.set_min_tls_version(TLS1_3);
+    tls_opts.set_max_tls_version(TLS1_3);
+    if (config.tls_require_client_cert) {
+      tls_opts.set_cert_request_type(
+          GRPC_SSL_REQUEST_AND_REQUIRE_CLIENT_CERTIFICATE_AND_VERIFY);
+    } else {
+      tls_opts.set_cert_request_type(GRPC_SSL_DONT_REQUEST_CLIENT_CERTIFICATE);
+    }
 
     veritas::gatekeeper::SaslServerOptions sasl_options;
     sasl_options.fake_salt_secret = config.fake_salt_secret;
@@ -37,7 +64,7 @@ int main() {
         config.rate_limit_per_minute, sasl_options);
     grpc::ServerBuilder builder;
     builder.AddListeningPort(config.bind_addr,
-                             grpc::SslServerCredentials(ssl_opts));
+                             grpc::experimental::TlsServerCredentials(tls_opts));
     builder.RegisterService(&service);
 
     std::unique_ptr<grpc::Server> server(builder.BuildAndStart());

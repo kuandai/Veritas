@@ -8,6 +8,8 @@ struct GatekeeperConfig {
   std::string bind_addr;
   std::string tls_cert_path;
   std::string tls_key_path;
+  std::string tls_ca_path;
+  bool tls_require_client_cert = false;
   int token_ttl_days = 30;
   int rate_limit_per_minute = 5;
   std::string token_store_uri;

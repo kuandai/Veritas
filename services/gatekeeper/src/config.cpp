@@ -48,6 +48,9 @@ GatekeeperConfig LoadConfig() {
   config.bind_addr = GetEnvOrEmpty("BIND_ADDR");
   config.tls_cert_path = GetEnvOrEmpty("TLS_CERT");
   config.tls_key_path = GetEnvOrEmpty("TLS_KEY");
+  config.tls_ca_path = GetEnvOrEmpty("TLS_CA_BUNDLE");
+  config.tls_require_client_cert =
+      GetEnvOrDefaultBool("TLS_REQUIRE_CLIENT_CERT", false);
   config.token_ttl_days = GetEnvOrDefaultInt("TOKEN_TTL_DAYS", 30);
   config.rate_limit_per_minute = GetEnvOrDefaultInt("RATE_LIMIT", 5);
   config.token_store_uri = GetEnvOrEmpty("TOKEN_STORE_URI");
@@ -75,6 +78,10 @@ GatekeeperConfig LoadConfig() {
   }
   if (config.tls_key_path.empty()) {
     throw std::runtime_error("TLS_KEY is required");
+  }
+  if (config.tls_require_client_cert && config.tls_ca_path.empty()) {
+    throw std::runtime_error(
+        "TLS_CA_BUNDLE is required when TLS_REQUIRE_CLIENT_CERT is enabled");
   }
 
   return config;
