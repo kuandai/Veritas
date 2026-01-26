@@ -4,17 +4,21 @@ This repository uses CMake + Conan (C++20). The Gatekeeper integration tests
 require Cyrus SASL with SRP enabled; a custom Conan recipe is provided in
 `conan/recipes/`.
 
+For the smoothest local workflow, use the scripts under `scripts/`:
+
+```bash
+./scripts/bootstrap.sh
+./scripts/build.sh
+./scripts/test.sh
+```
+
 ## 1. Export the SRP-enabled Cyrus SASL recipe
+
+`scripts/bootstrap.sh` will export the recipe and ensure a Conan profile
+exists. It defaults `CONAN_HOME` to `.conan/` in the repo. To export manually:
 
 ```bash
 conan export conan/recipes/cyrus-sasl/2.1.28 --version 2.1.28
-```
-
-If your default Conan home is not writable, set `CONAN_HOME` to a writable
-location and use that consistently:
-
-```bash
-CONAN_HOME=/tmp/conan-home conan export conan/recipes/cyrus-sasl/2.1.28 --version 2.1.28
 ```
 
 ## 2. Configure dependencies and build
@@ -40,3 +44,8 @@ ctest --test-dir build -R veritas_gatekeeper_ --output-on-failure
 If the SRP plugin is built as a shared module, set `SASL_PLUGIN_PATH` to the
 Conan package's `lib/sasl2` directory before running the Gatekeeper service or
 integration tests.
+
+## 5. Packaging
+
+`scripts/package.sh` is currently a placeholder. Decide on a packaging target
+(containers or installable tarballs) before wiring CI deployment.
