@@ -6,7 +6,10 @@ Authenticate clients and issue refresh tokens via a gRPC interface.
 
 ## Current implementation
 
-- gRPC server starts with TLS key/cert from env config.
+- gRPC server starts with TLS key/cert from env config (TLS 1.3 only).
+- TLS credentials are validated at startup (key matches leaf cert, validity
+  window, optional chain verification when a CA bundle is provided).
+- Optional mTLS enforcement via CA bundle + client cert requirement.
 - `BeginAuth` / `FinishAuth` handlers exist.
 - Per-IP rate limiting (5/minute).
 - Structured logging to stdout (`timestamp`, `ip`, `action`, `status`,
@@ -27,6 +30,13 @@ Authenticate clients and issue refresh tokens via a gRPC interface.
 
 ## Configuration notes
 
+TLS behavior is controlled by environment variables:
+
+- `TLS_CERT` (PEM chain: leaf + intermediates)
+- `TLS_KEY` (PEM private key)
+- `TLS_CA_BUNDLE` (optional CA bundle PEM for chain verification and mTLS)
+- `TLS_REQUIRE_CLIENT_CERT` (default: false)
+
 SASL behavior is controlled by environment variables:
 
 - `SASL_ENABLE` (default: true)
@@ -45,7 +55,6 @@ SASL behavior is controlled by environment variables:
 - Redis token store adapter exists; persistence is optional via
   `TOKEN_STORE_URI` (in-memory fallback otherwise).
 - Redis TLS (`rediss://`) is not supported yet.
-- TLS is not constrained to 1.3, and no additional cert validation policy.
 - gRPC error mapping is limited to current SASL status handling.
 - Unit tests exist for fake salt, token hashing, and rate limiting; integration
   tests are still missing.
@@ -54,5 +63,4 @@ SASL behavior is controlled by environment variables:
 
 - Streamlined SRP verifier provisioning and server-side rotation policy.
 - Redis-backed token store shared with Notary.
-- TLS 1.3-only policy and hardened mTLS.
 - Exportable metrics for rate limiting and analytics.

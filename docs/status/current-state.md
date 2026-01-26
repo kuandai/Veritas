@@ -72,7 +72,10 @@ Aspirational
 ### services/gatekeeper (SASL service)
 
 Implemented
-- gRPC server bootstrapped with TLS cert/key from env config.
+- gRPC server bootstrapped with TLS cert/key from env config (TLS 1.3 only).
+- TLS credentials validated at startup (key/cert match, validity window,
+  optional chain verification with CA bundle).
+- Optional mTLS enforcement with client cert verification.
 - `BeginAuth` and `FinishAuth` handlers are present.
 - Per-IP rate limiting (5/minute).
 - Structured auth event logging to stdout (`timestamp`, `ip`, `action`,
@@ -91,7 +94,6 @@ Placeholders / incomplete
 - Redis token store adapter exists; persistence is optional via
   `TOKEN_STORE_URI` (in-memory fallback otherwise).
 - Redis TLS (`rediss://`) is not supported yet.
-- TLS is not constrained to 1.3; no additional cert validation policy.
 - SASL error mapping is limited to a minimal gRPC status translation.
 - Unit tests exist for fake salt, token hashing, and rate limiting; integration
   tests are still missing.
@@ -99,14 +101,12 @@ Placeholders / incomplete
 Aspirational
 - Streamlined SRP verifier provisioning and server-side rotation policy.
 - Redis-backed token store shared with Notary.
-- TLS 1.3-only policy and hardened mTLS options.
 - Exportable rate limiting and analytics metrics.
 
 ## Cross-cutting gaps (incomplete)
 
 - SASL verifier provisioning and end-to-end SRP integration tests.
 - Token store persistence and revocation flows (beyond current Redis adapter).
-- TLS 1.3 enforcement and stronger certificate validation.
 - Shared storage layer and cross-service integration.
 - Integration tests for security-critical flows.
 
