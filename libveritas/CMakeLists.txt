@@ -30,21 +30,26 @@ target_compile_features(veritas PUBLIC cxx_std_20)
 
 find_package(OpenSSL REQUIRED)
 find_package(libsodium REQUIRED CONFIG)
+find_package(cyrus-sasl REQUIRED CONFIG)
+
+if(NOT TARGET veritas_protocol AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../protocol/CMakeLists.txt")
+  add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../protocol protocol)
+endif()
+
+if(TARGET veritas_protocol)
+  target_link_libraries(veritas PUBLIC veritas_protocol)
+endif()
 
 target_link_libraries(veritas
   PUBLIC
     OpenSSL::SSL
     OpenSSL::Crypto
     libsodium::libsodium
+    cyrus-sasl::cyrus-sasl
 )
 
 find_package(PkgConfig QUIET)
 if(PkgConfig_FOUND)
-  pkg_check_modules(LIBSASL2 QUIET IMPORTED_TARGET libsasl2)
-  if(TARGET PkgConfig::LIBSASL2)
-    target_link_libraries(veritas PUBLIC PkgConfig::LIBSASL2)
-  endif()
-
   pkg_check_modules(LIBSECRET QUIET IMPORTED_TARGET libsecret-1)
   if(TARGET PkgConfig::LIBSECRET)
     target_link_libraries(veritas PUBLIC PkgConfig::LIBSECRET)
