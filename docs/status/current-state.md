@@ -95,8 +95,9 @@ Placeholders / incomplete
   `TOKEN_STORE_URI` (in-memory fallback otherwise).
 - Redis TLS (`rediss://`) is not supported yet.
 - SASL error mapping is limited to a minimal gRPC status translation.
-- Unit tests exist for fake salt, token hashing, and rate limiting; integration
-  tests are still missing.
+- Unit tests cover fake salt, token hashing, rate limiting, config validation,
+  TLS credential validation, token store behavior, and session cache handling;
+  integration tests are still missing.
 
 Aspirational
 - Streamlined SRP verifier provisioning and server-side rotation policy.
