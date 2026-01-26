@@ -8,6 +8,7 @@ For the smoothest local workflow, use the scripts under `scripts/`:
 
 ```bash
 ./scripts/bootstrap.sh
+./scripts/lock.sh
 ./scripts/build.sh
 ./scripts/test.sh
 ```
@@ -49,3 +50,8 @@ integration tests.
 
 `scripts/package.sh` is currently a placeholder. Decide on a packaging target
 (containers or installable tarballs) before wiring CI deployment.
+
+## 6. Lockfile generation
+
+`scripts/lock.sh` will generate `conan.lock`. It requires access to the Conan
+remotes configured for dependency resolution.
