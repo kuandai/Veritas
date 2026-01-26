@@ -25,6 +25,7 @@ set(VERITAS_TEST_SOURCES
 if(VERITAS_ENABLE_PROTO_TESTS)
   find_package(protobuf REQUIRED CONFIG)
   find_package(gRPC REQUIRED CONFIG)
+  find_package(cyrus-sasl REQUIRED CONFIG)
   list(APPEND VERITAS_TEST_SOURCES
     gatekeeper/sasl_server_test.cpp
     ${CMAKE_BINARY_DIR}/protocol/gatekeeper.pb.cc
@@ -67,3 +68,50 @@ target_compile_definitions(veritas_gatekeeper_tests
 add_dependencies(veritas_gatekeeper_tests veritas_protocol)
 
 add_test(NAME veritas_gatekeeper_tests COMMAND veritas_gatekeeper_tests)
+
+if(VERITAS_ENABLE_PROTO_TESTS)
+  set(VERITAS_INTEGRATION_TEST_SOURCES
+    main.cpp
+    gatekeeper/sasl_integration_test.cpp
+    ${CMAKE_BINARY_DIR}/protocol/gatekeeper.pb.cc
+    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/fake_salt.cpp
+    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/sasl_server.cpp
+    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/secure_erase.cpp
+    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/session_cache.cpp
+    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_store.cpp
+    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_utils.cpp
+  )
+
+  add_executable(veritas_gatekeeper_integration_tests
+    ${VERITAS_INTEGRATION_TEST_SOURCES}
+  )
+
+  target_include_directories(veritas_gatekeeper_integration_tests
+    PRIVATE
+      ${CMAKE_SOURCE_DIR}/services/gatekeeper/src
+      ${CMAKE_BINARY_DIR}/protocol
+  )
+
+  target_link_libraries(veritas_gatekeeper_integration_tests
+    PRIVATE
+      GTest::gtest
+      OpenSSL::Crypto
+      protobuf::libprotobuf
+      gRPC::grpc++
+      cyrus-sasl::cyrus-sasl
+  )
+
+  target_compile_features(veritas_gatekeeper_integration_tests
+    PRIVATE
+      cxx_std_20
+  )
+
+  target_compile_definitions(veritas_gatekeeper_integration_tests
+    PRIVATE
+      VERITAS_DISABLE_REDIS
+  )
+
+  add_dependencies(veritas_gatekeeper_integration_tests veritas_protocol)
+  add_test(NAME veritas_gatekeeper_integration_tests
+           COMMAND veritas_gatekeeper_integration_tests)
+endif()
