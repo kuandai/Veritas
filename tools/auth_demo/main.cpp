@@ -322,7 +322,7 @@ int main(int argc, char** argv) {
     return ProvisionUser(args);
   }
 
-  veritas::auth::GatekeeperClientConfig config;
+  veritas::GatekeeperClientConfig config;
   config.target = args.target;
   config.allow_insecure = args.allow_insecure;
   if (!args.root_cert_path.empty()) {
