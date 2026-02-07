@@ -11,6 +11,7 @@ message SrpParameters {
 
 message BeginAuthRequest {
   string login_username = 1;
+  bytes client_start = 2;
 }
 
 message BeginAuthResponse {

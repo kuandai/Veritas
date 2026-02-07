@@ -30,10 +30,14 @@ GatekeeperClient::GatekeeperClient(const GatekeeperClientConfig& config) {
   stub_ = veritas::auth::v1::Gatekeeper::NewStub(channel_);
 }
 
-BeginAuthResult GatekeeperClient::BeginAuth(const std::string& username) {
+BeginAuthResult GatekeeperClient::BeginAuth(const std::string& username,
+                                            std::string_view client_start) {
   veritas::auth::v1::BeginAuthRequest request;
   veritas::auth::v1::BeginAuthResponse response;
   request.set_login_username(username);
+  if (!client_start.empty()) {
+    request.set_client_start(client_start.data(), client_start.size());
+  }
 
   grpc::ClientContext context;
   const grpc::Status status = stub_->BeginAuth(&context, request, &response);

@@ -25,7 +25,8 @@ class GatekeeperClient {
  public:
   explicit GatekeeperClient(const GatekeeperClientConfig& config);
 
-  BeginAuthResult BeginAuth(const std::string& username);
+  BeginAuthResult BeginAuth(const std::string& username,
+                            std::string_view client_start);
   FinishAuthResult FinishAuth(const std::string& session_id,
                               const std::string& client_proof);
 

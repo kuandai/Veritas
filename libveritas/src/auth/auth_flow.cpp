@@ -18,10 +18,19 @@ AuthResult AuthFlow::Authenticate(const std::string& username,
     throw std::runtime_error("Password is required");
   }
 
-  SecureString password_buffer(password);
-  SaslClient sasl_client("veritas_gatekeeper", username, password_buffer.view());
+  std::string sasl_username = username;
+  if (const char* realm = std::getenv("SASL_REALM")) {
+    if (realm[0] != '\0' && sasl_username.find('@') == std::string::npos) {
+      sasl_username.append("@").append(realm);
+    }
+  }
 
-  const auto begin = client_.BeginAuth(username);
+  SecureString password_buffer(password);
+  SaslClient sasl_client("veritas_gatekeeper", sasl_username,
+                         password_buffer.view());
+
+  const std::string client_start = sasl_client.Start();
+  const auto begin = client_.BeginAuth(sasl_username, client_start);
   const std::string client_proof =
       sasl_client.ComputeClientProof(begin.server_public);
   auto finish = client_.FinishAuth(begin.session_id, client_proof);

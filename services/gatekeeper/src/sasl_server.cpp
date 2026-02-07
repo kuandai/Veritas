@@ -59,6 +59,10 @@ int SaslGetopt(void* context,
     value = &ctx->mech_list;
   }
   if (!value) {
+    *result = nullptr;
+    if (len) {
+      *len = 0;
+    }
     return SASL_OK;
   }
   *result = value->c_str();
@@ -68,8 +72,46 @@ int SaslGetopt(void* context,
   return SASL_OK;
 }
 
-int SaslLog(void* /*context*/, int /*level*/, const char* /*message*/) {
+bool IsDebugEnabled();
+
+int SaslLog(void* /*context*/, int level, const char* message) {
+  if (!message) {
+    return SASL_OK;
+  }
+  if (!IsDebugEnabled()) {
+    return SASL_OK;
+  }
+  std::cerr << "[sasl] level=" << level << " " << message << "\n";
   return SASL_OK;
+}
+
+void LogSaslDetail(sasl_conn_t* conn,
+                   std::string_view context,
+                   int code) {
+  if (!conn) {
+    return;
+  }
+  const char* detail = sasl_errdetail(conn);
+  if (!detail || detail[0] == '\0') {
+    return;
+  }
+  std::cerr << "[sasl] " << context << " rc=" << code
+            << " detail=" << detail << "\n";
+}
+
+void LogSaslProp(sasl_conn_t* conn, int prop_id, std::string_view name) {
+  if (!conn) {
+    return;
+  }
+  const void* prop = nullptr;
+  if (sasl_getprop(conn, prop_id, &prop) != SASL_OK || !prop) {
+    return;
+  }
+  const char* value = static_cast<const char*>(prop);
+  if (!value || value[0] == '\0') {
+    return;
+  }
+  std::cerr << "[sasl] " << name << "=" << value << "\n";
 }
 
 int SaslGetpath(void* context, const char** path) {
@@ -101,6 +143,37 @@ int SaslGetconfpath(void* context, char** path) {
   *path = buffer;
   return SASL_OK;
 }
+
+int SaslCanonUser(sasl_conn_t* /*conn*/,
+                  void* /*context*/,
+                  const char* in,
+                  unsigned inlen,
+                  unsigned /*flags*/,
+                  const char* user_realm,
+                  char* out,
+                  unsigned out_max,
+                  unsigned* out_len) {
+  if (!in || !out || out_max == 0) {
+    return SASL_BADPARAM;
+  }
+  const std::size_t input_len =
+      inlen > 0 ? static_cast<std::size_t>(inlen) : std::strlen(in);
+  std::string value(in, input_len);
+  if (user_realm && user_realm[0] != '\0' &&
+      value.find('@') == std::string::npos) {
+    value.push_back('@');
+    value.append(user_realm);
+  }
+  if (value.size() + 1 > out_max) {
+    return SASL_BUFOVER;
+  }
+  std::memcpy(out, value.data(), value.size());
+  out[value.size()] = '\0';
+  if (out_len) {
+    *out_len = static_cast<unsigned>(value.size());
+  }
+  return SASL_OK;
+}
 #endif
 
 std::string GenerateRandomBytes(std::size_t length) {
@@ -109,6 +182,15 @@ std::string GenerateRandomBytes(std::size_t length) {
 
 std::string GenerateSessionId() {
   return HexEncodeBytes(GenerateRandomBytes(16));
+}
+
+bool IsDebugEnabled() {
+  const char* env = std::getenv("VERITAS_SASL_DEBUG");
+  if (!env || env[0] == '\0') {
+    return false;
+  }
+  return std::strcmp(env, "0") != 0 && std::strcmp(env, "false") != 0 &&
+         std::strcmp(env, "no") != 0;
 }
 
 std::string SelectMechanism(const std::string& mech_list) {
@@ -206,6 +288,9 @@ struct SaslContext {
           {SASL_CB_GETCONFPATH, reinterpret_cast<int (*)(void)>(&SaslGetconfpath),
            &callback_ctx});
     }
+    callbacks.push_back(
+        {SASL_CB_CANON_USER, reinterpret_cast<int (*)(void)>(&SaslCanonUser),
+         &callback_ctx});
     callbacks.push_back(
         {SASL_CB_LOG, reinterpret_cast<int (*)(void)>(&SaslLog),
          &callback_ctx});
@@ -306,6 +391,15 @@ grpc::Status SaslServer::BeginAuth(
       return grpc::Status(grpc::StatusCode::INTERNAL, g_sasl_init_error);
     }
 
+    const auto& client_start = request.client_start();
+    if (client_start.empty()) {
+      return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                          "client_start is required");
+    }
+    if (IsDebugEnabled()) {
+      std::cerr << "[sasl] client_start_len=" << client_start.size() << "\n";
+    }
+
     sasl_conn_t* conn = nullptr;
     const std::string mech = SelectMechanism(options_.sasl_mech_list);
     const char* realm = options_.sasl_realm.empty()
@@ -325,10 +419,13 @@ grpc::Status SaslServer::BeginAuth(
     const char* server_out = nullptr;
     unsigned server_out_len = 0;
     result = sasl_server_start(conn, mech.c_str(),
-                               request.login_username().data(),
-                               static_cast<unsigned>(
-                                   request.login_username().size()),
+                               client_start.data(),
+                               static_cast<unsigned>(client_start.size()),
                                &server_out, &server_out_len);
+    if (IsDebugEnabled()) {
+      std::cerr << "[sasl] sasl_server_start rc=" << result
+                << " server_out_len=" << server_out_len << "\n";
+    }
     if (result == SASL_NOUSER || result == SASL_NOVERIFY) {
       sasl_dispose(&conn);
       SrpSession session{session_id, request.login_username(),
@@ -346,6 +443,7 @@ grpc::Status SaslServer::BeginAuth(
       return grpc::Status::OK;
     }
     if (result != SASL_CONTINUE) {
+      LogSaslDetail(conn, "sasl_server_start", result);
       sasl_dispose(&conn);
       if (result == SASL_OK) {
         return grpc::Status(grpc::StatusCode::INTERNAL,
@@ -363,6 +461,8 @@ grpc::Status SaslServer::BeginAuth(
     } else {
       response->set_server_public("");
     }
+    LogSaslProp(conn, SASL_USERNAME, "username");
+    LogSaslProp(conn, SASL_AUTHUSER, "authuser");
     response->set_salt("");
     response->set_session_id(session_id);
     auto* params = response->mutable_params();
@@ -443,13 +543,23 @@ grpc::Status SaslServer::FinishAuth(
     }
 
     const std::string& client_proof = request.client_proof();
+    if (IsDebugEnabled()) {
+      std::cerr << "[sasl] client_proof_len=" << client_proof.size() << "\n";
+    }
     const char* server_out = nullptr;
     unsigned server_out_len = 0;
     const int result =
         sasl_server_step(session->sasl_conn->get(), client_proof.data(),
                          static_cast<unsigned>(client_proof.size()),
                          &server_out, &server_out_len);
-    if (result != SASL_OK) {
+    bool treat_continue_as_ok = false;
+    if (result == SASL_CONTINUE && server_out && server_out_len > 0) {
+      treat_continue_as_ok = true;
+    }
+    if (result != SASL_OK && !treat_continue_as_ok) {
+      LogSaslDetail(session->sasl_conn->get(), "sasl_server_step", result);
+      LogSaslProp(session->sasl_conn->get(), SASL_USERNAME, "username");
+      LogSaslProp(session->sasl_conn->get(), SASL_AUTHUSER, "authuser");
       session_cache_.Erase(request.session_id());
       if (result == SASL_CONTINUE) {
         return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,

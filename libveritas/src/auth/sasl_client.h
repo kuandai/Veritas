@@ -19,6 +19,7 @@ class SaslClient {
   SaslClient(const SaslClient&) = delete;
   SaslClient& operator=(const SaslClient&) = delete;
 
+  std::string Start();
   std::string ComputeClientProof(std::string_view server_public);
   void VerifyServerProof(std::string_view server_proof);
 
@@ -41,6 +42,9 @@ class SaslClient {
   struct CallbackContext {
     std::string username;
     SecretBuffer secret;
+    std::string plugin_path;
+    std::string conf_path;
+    std::string realm;
   };
 
   static void EnsureInitialized();
@@ -48,13 +52,16 @@ class SaslClient {
   static int GetSimple(void* context, int id, const char** result, unsigned* len);
   static int GetSecret(sasl_conn_t* conn, void* context, int id,
                        sasl_secret_t** psecret);
-
-  void Start();
+  static int GetPath(void* context, const char** path);
+  static int GetConfPath(void* context, char** path);
+  static int GetRealm(void* context, int id, const char** availrealms,
+                      const char** result);
 
   std::string service_;
   sasl_conn_t* conn_ = nullptr;
   std::unique_ptr<CallbackContext> context_;
   std::vector<sasl_callback_t> callbacks_;
+  std::string initial_response_;
   bool started_ = false;
 };
 

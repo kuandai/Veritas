@@ -10,6 +10,7 @@ Define gRPC/Protobuf interfaces for services.
 - `protocol/identity.proto`: **placeholder** message.
 
 Gatekeeper payload semantics (current implementation):
+- `BeginAuthRequest.client_start` carries the SASL SRP client initial response.
 - `BeginAuthResponse.server_public` carries the SASL SRP server challenge
   payload; `salt` is only populated for deterministic fake responses.
 - `FinishAuthRequest.client_proof` and `FinishAuthResponse.server_proof` carry
