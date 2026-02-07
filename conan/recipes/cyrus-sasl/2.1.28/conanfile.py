@@ -40,6 +40,7 @@ class CyrusSaslConan(ConanFile):
         "with_anon": [True, False],
         "with_srp": [True, False],
         "with_srp_setpass": [True, False],
+        "with_gdbm": [True, False],
         "with_postgresql": [True, False],
         "with_mysql": [True, False],
         "with_sqlite3": [True, False],
@@ -59,6 +60,7 @@ class CyrusSaslConan(ConanFile):
         "with_anon": True,
         "with_srp": True,
         "with_srp_setpass": True,
+        "with_gdbm": False,
         "with_postgresql": False,
         "with_mysql": False,
         "with_sqlite3": False,
@@ -78,6 +80,7 @@ class CyrusSaslConan(ConanFile):
             # saslauthd doesn't compile on Windows
             # https://www.cyrusimap.org/sasl/sasl/windows.html#install-windows
             del self.options.with_saslauthd
+            del self.options.with_gdbm
         if is_msvc(self):
             # always required
             del self.options.with_openssl
@@ -98,6 +101,8 @@ class CyrusSaslConan(ConanFile):
     def requirements(self):
         if is_msvc(self) or self.options.with_openssl:
             self.requires("openssl/[>=1.1 <4]")
+        if self.options.get_safe("with_gdbm"):
+            self.requires("gdbm/[>=1.18 <2]")
         if self.options.get_safe("with_postgresql"):
             self.requires("libpq/[>=15.4 <18]")
         if self.options.get_safe("with_mysql"):
@@ -120,6 +125,12 @@ class CyrusSaslConan(ConanFile):
     def source(self):
         get(self, **self.conan_data["sources"][self.version], strip_root=True)
         apply_conandata_patches(self)
+        replace_in_file(
+            self,
+            os.path.join(self.source_folder, "plugins", "srp.c"),
+            "server_mda->name, &v, saltlen, salt);",
+            "server_mda->name, v, saltlen, salt);",
+        )
 
     def _generate_autotools(self):
         env = VirtualBuildEnv(self)
@@ -131,10 +142,11 @@ class CyrusSaslConan(ConanFile):
         tc = AutotoolsToolchain(self)
         yes_no = lambda v: "yes" if v else "no"
         rootpath_no = lambda v, req: unix_path(self, self.dependencies[req].package_folder) if v else "no"
+        dblib = "gdbm" if self.options.get_safe("with_gdbm") else "none"
         tc.configure_args.extend([
             "--disable-sample",
             "--disable-macos-framework",
-            "--with-dblib=none",
+            "--with-dblib={}".format(dblib),
             "--with-openssl={}".format(yes_no(self.options.with_openssl)),
             "--enable-digest={}".format(yes_no(self.options.with_digest)),
             "--enable-scram={}".format(yes_no(self.options.with_scram)),
