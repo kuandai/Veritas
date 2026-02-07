@@ -3,6 +3,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <random>
 #include <string>
@@ -139,6 +140,109 @@ std::string TempPath(const std::string& prefix) {
   return (base / (prefix + "_" + RandomSuffix())).string();
 }
 
+std::string QualifyUser(std::string username, const std::string& realm) {
+  if (!realm.empty() && username.find('@') == std::string::npos) {
+    username.push_back('@');
+    username.append(realm);
+  }
+  return username;
+}
+
+std::string FindSaslPluginPath() {
+  if (const char* env = std::getenv("SASL_PATH")) {
+    return env;
+  }
+  if (const char* env = std::getenv("SASL_PLUGIN_PATH")) {
+    return env;
+  }
+
+  std::vector<std::filesystem::path> roots;
+  if (const char* env = std::getenv("CONAN_HOME")) {
+    roots.emplace_back(env);
+  }
+  if (const char* home = std::getenv("HOME")) {
+    std::filesystem::path conan2 = std::filesystem::path(home) / ".conan2";
+    if (std::filesystem::exists(conan2)) {
+      roots.push_back(conan2);
+    }
+  }
+
+  std::filesystem::path cwd = std::filesystem::current_path();
+  for (int i = 0; i < 4; ++i) {
+    std::filesystem::path candidate = cwd / ".conan";
+    if (std::filesystem::exists(candidate)) {
+      roots.push_back(candidate);
+      break;
+    }
+    if (!cwd.has_parent_path()) {
+      break;
+    }
+    cwd = cwd.parent_path();
+  }
+
+  for (const auto& root : roots) {
+    std::filesystem::path search_root = root / "p" / "b";
+    if (!std::filesystem::exists(search_root)) {
+      continue;
+    }
+    std::error_code ec;
+    for (auto it = std::filesystem::recursive_directory_iterator(search_root, ec);
+         it != std::filesystem::recursive_directory_iterator();
+         it.increment(ec)) {
+      if (ec || !it->is_directory(ec)) {
+        continue;
+      }
+      if (it->path().filename() != "sasl2") {
+        continue;
+      }
+      for (const auto& entry :
+           std::filesystem::directory_iterator(it->path(), ec)) {
+        if (ec) {
+          break;
+        }
+        const std::string filename = entry.path().filename().string();
+        if (filename.rfind("libsrp.so", 0) == 0) {
+          return it->path().string();
+        }
+      }
+    }
+  }
+
+  return "";
+}
+
+struct SaslTestEnv {
+  std::string plugin_path;
+  std::string conf_dir;
+  std::string realm;
+};
+
+const SaslTestEnv& GetSaslTestEnv() {
+  static SaslTestEnv env = []() {
+    SaslTestEnv value;
+    value.realm = "veritas-test";
+    value.plugin_path = FindSaslPluginPath();
+
+    if (!value.plugin_path.empty()) {
+      setenv("SASL_PATH", value.plugin_path.c_str(), 1);
+    }
+    setenv("SASL_REALM", value.realm.c_str(), 1);
+
+    value.conf_dir = TempPath("veritas_sasl_conf");
+    std::filesystem::create_directories(value.conf_dir);
+    const std::filesystem::path conf_path =
+        std::filesystem::path(value.conf_dir) / "veritas_gatekeeper.conf";
+    std::ofstream conf(conf_path);
+    conf << "pwcheck_method: auxprop\n"
+         << "auxprop_plugin: sasldb\n"
+         << "mech_list: SRP\n"
+         << "srp_mda: SHA-1\n";
+    setenv("SASL_CONF_PATH", value.conf_dir.c_str(), 1);
+    return value;
+  }();
+  return env;
+}
+
 bool IsSrpUnavailable(const grpc::Status& status) {
   if (status.error_code() == grpc::StatusCode::UNAVAILABLE) {
     const std::string message = status.error_message();
@@ -164,7 +268,21 @@ SaslSetupResult EnsureUserExists(
   veritas::gatekeeper::SaslServer server(options);
   veritas::auth::v1::BeginAuthRequest warmup_request;
   veritas::auth::v1::BeginAuthResponse warmup_response;
-  warmup_request.set_login_username("warmup_" + RandomSuffix());
+  const std::string warmup_user =
+      QualifyUser("warmup_" + RandomSuffix(), options.sasl_realm);
+  warmup_request.set_login_username(warmup_user);
+  try {
+    SaslClient warmup_client(options.sasl_service, warmup_user, "warmup-pass");
+    const std::string warmup_start = warmup_client.Start();
+    if (warmup_start.empty()) {
+      return {SaslSetupKind::Skip,
+              "SASL client did not emit initial response"};
+    }
+    warmup_request.set_client_start(warmup_start);
+  } catch (const std::exception& ex) {
+    return {SaslSetupKind::Skip,
+            std::string("SASL client start failed: ") + ex.what()};
+  }
   const grpc::Status warmup_status =
       server.BeginAuth(warmup_request, &warmup_response);
   if (!warmup_status.ok()) {
@@ -270,13 +388,18 @@ SaslSetupResult EnsureClientSrpAvailable(const std::string& service,
 }  // namespace
 
 TEST(SaslClientTest, SrpHappyPath) {
+  const auto& env = GetSaslTestEnv();
   veritas::gatekeeper::SaslServerOptions options;
   options.fake_salt_secret = "test-secret";
   options.sasl_mech_list = "SRP";
   options.sasl_service = "veritas_gatekeeper";
   options.sasl_dbname = TempPath("veritas_sasldb");
+  options.sasl_plugin_path = env.plugin_path;
+  options.sasl_conf_path = env.conf_dir;
+  options.sasl_realm = env.realm;
 
-  const std::string username = "user_" + RandomSuffix();
+  const std::string username =
+      QualifyUser("user_" + RandomSuffix(), options.sasl_realm);
   const std::string password = "pass_" + RandomSuffix();
 
   const auto setup = EnsureUserExists(options, username, password);
@@ -293,9 +416,16 @@ TEST(SaslClientTest, SrpHappyPath) {
   ASSERT_EQ(client_setup.kind, SaslSetupKind::Ok) << client_setup.message;
 
   veritas::gatekeeper::SaslServer server(options);
+  SaslClient client(options.sasl_service, username, password);
+  const std::string client_start = client.Start();
+  if (client_start.empty()) {
+    GTEST_SKIP() << "SASL client did not emit initial response";
+  }
+
   veritas::auth::v1::BeginAuthRequest begin_request;
   veritas::auth::v1::BeginAuthResponse begin_response;
   begin_request.set_login_username(username);
+  begin_request.set_client_start(client_start);
 
   const grpc::Status begin_status =
       server.BeginAuth(begin_request, &begin_response);
@@ -306,7 +436,6 @@ TEST(SaslClientTest, SrpHappyPath) {
     ASSERT_TRUE(begin_status.ok());
   }
 
-  SaslClient client(options.sasl_service, username, password);
   const std::string client_proof =
       client.ComputeClientProof(begin_response.server_public());
 

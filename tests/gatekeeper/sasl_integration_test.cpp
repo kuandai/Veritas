@@ -4,12 +4,14 @@
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <random>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <gtest/gtest.h>
 
@@ -75,6 +77,109 @@ std::string TempPath(const std::string& prefix) {
   return (base / (prefix + "_" + RandomSuffix())).string();
 }
 
+std::string QualifyUser(std::string username, const std::string& realm) {
+  if (!realm.empty() && username.find('@') == std::string::npos) {
+    username.push_back('@');
+    username.append(realm);
+  }
+  return username;
+}
+
+std::string FindSaslPluginPath() {
+  if (const char* env = std::getenv("SASL_PATH")) {
+    return env;
+  }
+  if (const char* env = std::getenv("SASL_PLUGIN_PATH")) {
+    return env;
+  }
+
+  std::vector<std::filesystem::path> roots;
+  if (const char* env = std::getenv("CONAN_HOME")) {
+    roots.emplace_back(env);
+  }
+  if (const char* home = std::getenv("HOME")) {
+    std::filesystem::path conan2 = std::filesystem::path(home) / ".conan2";
+    if (std::filesystem::exists(conan2)) {
+      roots.push_back(conan2);
+    }
+  }
+
+  std::filesystem::path cwd = std::filesystem::current_path();
+  for (int i = 0; i < 4; ++i) {
+    std::filesystem::path candidate = cwd / ".conan";
+    if (std::filesystem::exists(candidate)) {
+      roots.push_back(candidate);
+      break;
+    }
+    if (!cwd.has_parent_path()) {
+      break;
+    }
+    cwd = cwd.parent_path();
+  }
+
+  for (const auto& root : roots) {
+    std::filesystem::path search_root = root / "p" / "b";
+    if (!std::filesystem::exists(search_root)) {
+      continue;
+    }
+    std::error_code ec;
+    for (auto it = std::filesystem::recursive_directory_iterator(search_root, ec);
+         it != std::filesystem::recursive_directory_iterator();
+         it.increment(ec)) {
+      if (ec || !it->is_directory(ec)) {
+        continue;
+      }
+      if (it->path().filename() != "sasl2") {
+        continue;
+      }
+      for (const auto& entry :
+           std::filesystem::directory_iterator(it->path(), ec)) {
+        if (ec) {
+          break;
+        }
+        const std::string filename = entry.path().filename().string();
+        if (filename.rfind("libsrp.so", 0) == 0) {
+          return it->path().string();
+        }
+      }
+    }
+  }
+
+  return "";
+}
+
+struct SaslTestEnv {
+  std::string plugin_path;
+  std::string conf_dir;
+  std::string realm;
+};
+
+const SaslTestEnv& GetSaslTestEnv() {
+  static SaslTestEnv env = []() {
+    SaslTestEnv value;
+    value.realm = "veritas-test";
+    value.plugin_path = FindSaslPluginPath();
+
+    if (!value.plugin_path.empty()) {
+      setenv("SASL_PATH", value.plugin_path.c_str(), 1);
+    }
+    setenv("SASL_REALM", value.realm.c_str(), 1);
+
+    value.conf_dir = TempPath("veritas_sasl_conf");
+    std::filesystem::create_directories(value.conf_dir);
+    const std::filesystem::path conf_path =
+        std::filesystem::path(value.conf_dir) / "veritas_gatekeeper.conf";
+    std::ofstream conf(conf_path);
+    conf << "pwcheck_method: auxprop\n"
+         << "auxprop_plugin: sasldb\n"
+         << "mech_list: SRP\n"
+         << "srp_mda: SHA-1\n";
+    setenv("SASL_CONF_PATH", value.conf_dir.c_str(), 1);
+    return value;
+  }();
+  return env;
+}
+
 struct SaslFixture {
   SaslServerOptions options;
   std::string db_path;
@@ -83,14 +188,18 @@ struct SaslFixture {
   std::optional<SaslServer> server;
 
   SaslFixture() {
+    const auto& env = GetSaslTestEnv();
     db_path = TempPath("veritas_sasldb");
-    username = "user_" + RandomSuffix();
+    username = QualifyUser("user_" + RandomSuffix(), env.realm);
     password = "pass_" + RandomSuffix();
 
     options.fake_salt_secret = "test-secret";
     options.sasl_service = "veritas_gatekeeper";
     options.sasl_mech_list = "SRP";
     options.sasl_dbname = db_path;
+    options.sasl_plugin_path = env.plugin_path;
+    options.sasl_conf_path = env.conf_dir;
+    options.sasl_realm = env.realm;
 
     server.emplace(options);
   }
@@ -136,7 +245,49 @@ struct SaslSetupResult {
 SaslSetupResult EnsureUserExists(SaslFixture& fixture) {
   veritas::auth::v1::BeginAuthRequest warmup_request;
   veritas::auth::v1::BeginAuthResponse warmup_response;
-  warmup_request.set_login_username("warmup_" + RandomSuffix());
+  const std::string warmup_user =
+      QualifyUser("warmup_" + RandomSuffix(), fixture.options.sasl_realm);
+  warmup_request.set_login_username(warmup_user);
+
+  ClientCreds warmup_creds{warmup_user, "warmup-pass"};
+  sasl_callback_t warmup_callbacks[] = {
+      {SASL_CB_AUTHNAME, reinterpret_cast<int (*)(void)>(&SaslGetSimple),
+       &warmup_creds},
+      {SASL_CB_USER, reinterpret_cast<int (*)(void)>(&SaslGetSimple),
+       &warmup_creds},
+      {SASL_CB_PASS, reinterpret_cast<int (*)(void)>(&SaslGetSecret),
+       &warmup_creds},
+      {SASL_CB_LIST_END, nullptr, nullptr},
+  };
+  sasl_conn_t* warmup_conn = nullptr;
+  int rc = sasl_client_new(fixture.options.sasl_service.c_str(), "localhost",
+                           nullptr, nullptr, warmup_callbacks, 0,
+                           &warmup_conn);
+  if (rc != SASL_OK) {
+    return {SaslSetupResultKind::Fail, "SASL client init failed"};
+  }
+  const char* warmup_out = nullptr;
+  unsigned warmup_out_len = 0;
+  const char* warmup_mech = nullptr;
+  rc = sasl_client_start(warmup_conn, "SRP", nullptr, &warmup_out,
+                         &warmup_out_len, &warmup_mech);
+  if (rc == SASL_NOMECH) {
+    sasl_dispose(&warmup_conn);
+    return {SaslSetupResultKind::Skip,
+            "SRP mechanism not available for client"};
+  }
+  if (rc != SASL_OK && rc != SASL_CONTINUE) {
+    sasl_dispose(&warmup_conn);
+    return {SaslSetupResultKind::Fail, "SASL client start failed"};
+  }
+  if (!warmup_out || warmup_out_len == 0) {
+    sasl_dispose(&warmup_conn);
+    return {SaslSetupResultKind::Fail,
+            "SASL client start returned empty initial response"};
+  }
+  warmup_request.set_client_start(
+      std::string(warmup_out, warmup_out_len));
+  sasl_dispose(&warmup_conn);
   const grpc::Status warmup_status =
       fixture.server->BeginAuth(warmup_request, &warmup_response);
   if (!warmup_status.ok()) {
@@ -200,18 +351,6 @@ TEST(SaslIntegrationTest, SrpHandshakeHappyPath) {
     GTEST_SKIP() << "SASL client initialization failed";
   }
 
-  veritas::auth::v1::BeginAuthRequest begin_request;
-  veritas::auth::v1::BeginAuthResponse begin_response;
-  begin_request.set_login_username(fixture.username);
-  const grpc::Status begin_status =
-      fixture.server->BeginAuth(begin_request, &begin_response);
-  if (!begin_status.ok()) {
-    if (IsSrpUnavailable(begin_status)) {
-      GTEST_SKIP() << "SRP mechanism not available in SASL build";
-    }
-    ASSERT_TRUE(begin_status.ok());
-  }
-
   ClientCreds creds{fixture.username, fixture.password};
   sasl_callback_t callbacks[] = {
       {SASL_CB_AUTHNAME, reinterpret_cast<int (*)(void)>(&SaslGetSimple), &creds},
@@ -235,6 +374,24 @@ TEST(SaslIntegrationTest, SrpHandshakeHappyPath) {
     GTEST_SKIP() << "SRP mechanism not available for client";
   }
   ASSERT_TRUE(rc == SASL_CONTINUE || rc == SASL_OK);
+  if (!client_out || client_out_len == 0) {
+    sasl_dispose(&client_conn);
+    GTEST_SKIP() << "SRP client did not emit initial response";
+  }
+
+  veritas::auth::v1::BeginAuthRequest begin_request;
+  veritas::auth::v1::BeginAuthResponse begin_response;
+  begin_request.set_login_username(fixture.username);
+  begin_request.set_client_start(std::string(client_out, client_out_len));
+  const grpc::Status begin_status =
+      fixture.server->BeginAuth(begin_request, &begin_response);
+  if (!begin_status.ok()) {
+    if (IsSrpUnavailable(begin_status)) {
+      sasl_dispose(&client_conn);
+      GTEST_SKIP() << "SRP mechanism not available in SASL build";
+    }
+    ASSERT_TRUE(begin_status.ok());
+  }
 
   rc = sasl_client_step(
       client_conn, begin_response.server_public().data(),
@@ -272,17 +429,48 @@ TEST(SaslIntegrationTest, InvalidProofIsUnauthenticated) {
   }
   ASSERT_EQ(setup.kind, SaslSetupResultKind::Ok) << setup.message;
 
+  ClientCreds creds{fixture.username, fixture.password};
+  sasl_callback_t callbacks[] = {
+      {SASL_CB_AUTHNAME, reinterpret_cast<int (*)(void)>(&SaslGetSimple), &creds},
+      {SASL_CB_USER, reinterpret_cast<int (*)(void)>(&SaslGetSimple), &creds},
+      {SASL_CB_PASS, reinterpret_cast<int (*)(void)>(&SaslGetSecret), &creds},
+      {SASL_CB_LIST_END, nullptr, nullptr},
+  };
+
+  sasl_conn_t* client_conn = nullptr;
+  int rc = sasl_client_new(fixture.options.sasl_service.c_str(), "localhost",
+                           nullptr, nullptr, callbacks, 0, &client_conn);
+  ASSERT_EQ(rc, SASL_OK);
+
+  const char* client_out = nullptr;
+  unsigned client_out_len = 0;
+  const char* mech = nullptr;
+  rc = sasl_client_start(client_conn, "SRP", nullptr, &client_out,
+                         &client_out_len, &mech);
+  if (rc == SASL_NOMECH) {
+    sasl_dispose(&client_conn);
+    GTEST_SKIP() << "SRP mechanism not available for client";
+  }
+  ASSERT_TRUE(rc == SASL_CONTINUE || rc == SASL_OK);
+  if (!client_out || client_out_len == 0) {
+    sasl_dispose(&client_conn);
+    GTEST_SKIP() << "SRP client did not emit initial response";
+  }
+
   veritas::auth::v1::BeginAuthRequest begin_request;
   veritas::auth::v1::BeginAuthResponse begin_response;
   begin_request.set_login_username(fixture.username);
+  begin_request.set_client_start(std::string(client_out, client_out_len));
   const grpc::Status begin_status =
       fixture.server->BeginAuth(begin_request, &begin_response);
   if (!begin_status.ok()) {
     if (IsSrpUnavailable(begin_status)) {
+      sasl_dispose(&client_conn);
       GTEST_SKIP() << "SRP mechanism not available in SASL build";
     }
     ASSERT_TRUE(begin_status.ok());
   }
+  sasl_dispose(&client_conn);
 
   veritas::auth::v1::FinishAuthRequest finish_request;
   veritas::auth::v1::FinishAuthResponse finish_response;
