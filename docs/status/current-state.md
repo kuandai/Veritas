@@ -16,8 +16,21 @@ items.
 
 - CMake + Conan, C++20.
 - gRPC/Protobuf code generation is wired through the `protocol` target.
+- Custom Cyrus SASL recipe applies an SRP `sasl_setpass` fix required for
+  sasldb provisioning.
 **Aspirational:** replace `file(GLOB_RECURSE ...)` with explicit source lists
 as the codebase stabilizes.
+
+## Deployment testing (latest)
+
+- Local Gatekeeper + demo client deployment was exercised on 2026-02-07.
+  SRP login succeeds when:
+  - `SASL_REALM` is set and the client uses a realm-qualified authid
+    (the demo now appends `@<realm>` automatically).
+  - `SASL_CONF_PATH` points at a directory containing
+    `veritas_gatekeeper.conf`.
+  - The server accepts `SASL_CONTINUE` with a final server proof as
+    success.
 
 ## Component status (summary)
 
@@ -88,6 +101,7 @@ Implemented
   - SASL server challenge returned in `server_public` (opaque payload).
   - Deterministic fake salts for unknown users.
   - SASL server final payload returned in `server_proof`.
+  - `BeginAuthRequest.client_start` carries the SASL client initial response.
   - Session ids stored in a TTL cache.
   - Refresh token issuance + SHA-256 hashing, persisted to Redis when
     `TOKEN_STORE_URI` is set (in-memory fallback otherwise).

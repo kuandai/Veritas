@@ -3,6 +3,8 @@
 This repository uses CMake + Conan (C++20). The Gatekeeper integration tests
 require Cyrus SASL with SRP enabled; a custom Conan recipe is provided in
 `conan/recipes/`.
+The recipe also applies a small SRP `sasl_setpass` fix to avoid a segfault
+when provisioning users via sasldb.
 
 For the smoothest local workflow, use the scripts under `scripts/`:
 
@@ -43,8 +45,15 @@ ctest --test-dir build -R veritas_gatekeeper_ --output-on-failure
 ## 4. SRP plugin runtime configuration
 
 If the SRP plugin is built as a shared module, set `SASL_PLUGIN_PATH` to the
-Conan package's `lib/sasl2` directory before running the Gatekeeper service or
-integration tests.
+Conan package's `lib/sasl2` directory before running the Gatekeeper service.
+For client-side SASL (including libveritas tests/demos), set `SASL_PATH` to
+the same directory; Cyrus SASL clients read `SASL_PATH` for plugin discovery.
+Set `SASL_REALM` when using sasldb-backed SRP so the client authid is
+realm-qualified (`user@realm`), matching the stored verifier.
+
+`SASL_CONF_PATH` should point to a directory containing
+`veritas_gatekeeper.conf` when using a custom SASL config (not a direct
+file path).
 
 ## 5. Packaging
 

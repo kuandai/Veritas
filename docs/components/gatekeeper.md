@@ -18,15 +18,18 @@ Authenticate clients and issue refresh tokens via a gRPC interface.
 - SASL SRP-6a via Cyrus SASL:
   - `BeginAuth` seeds a SASL session and returns the SASL server challenge in
     `server_public` (opaque payload).
+  - `BeginAuthRequest.client_start` carries the SASL client initial response
+    and is required when SASL is enabled.
   - Unknown users receive a deterministic fake salt plus a fake challenge to
     reduce enumeration signals.
   - For real users the `salt` field is empty; clients must use the SASL
     challenge payload to compute proofs.
   - `FinishAuth` validates the client proof via SASL and returns the SASL
-    server final payload in `server_proof`.
-- Session ids stored in a TTL cache.
-- Refresh token issuance + SHA-256 hashing stored in Redis when
-  `TOKEN_STORE_URI` is set (in-memory fallback otherwise).
+    server final payload in `server_proof` (accepting SRP's final
+    `SASL_CONTINUE` as success when a server proof is present).
+  - Session ids stored in a TTL cache.
+  - Refresh token issuance + SHA-256 hashing stored in Redis when
+    `TOKEN_STORE_URI` is set (in-memory fallback otherwise).
 
 ## Configuration notes
 
@@ -47,11 +50,18 @@ SASL behavior is controlled by environment variables:
 - `SASL_DBNAME` (optional, sasldb path)
 - `SASL_REALM` (optional)
 - `SASL_ENABLE=false` forces a mock handshake (intended for tests only).
+Note: client-side SASL (libveritas tests/demos) uses `SASL_PATH` for plugin
+discovery; set it to the same `lib/sasl2` directory when running clients.
+For SRP, set `SASL_REALM` and ensure the client authid is realm-qualified
+(`user@realm`); the client library now appends `@<realm>` automatically when
+`SASL_REALM` is set.
 
 ## Placeholders / incomplete
 
 - SASL SRP handshake depends on external SASL configuration (sasldb/auxprop);
   verifier provisioning is not automated.
+  Use the repo's custom Cyrus SASL recipe when provisioning users via
+  `saslpasswd2` to avoid the upstream SRP `sasl_setpass` crash.
 - Redis token store adapter exists; persistence is optional via
   `TOKEN_STORE_URI` (in-memory fallback otherwise).
 - Redis TLS (`rediss://`) is not supported yet.
