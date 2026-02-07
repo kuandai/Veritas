@@ -10,6 +10,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(VERITAS_BUILD_LIB "Build libveritas library" ON)
 option(VERITAS_BUILD_SERVICES "Build backend services" ON)
 option(VERITAS_BUILD_PROTOCOL "Build protocol artifacts" ON)
+option(VERITAS_BUILD_TOOLS "Build developer tools" ON)
 
 include(CTest)
 
@@ -23,6 +24,10 @@ endif()
 
 if(VERITAS_BUILD_SERVICES)
   add_subdirectory(services)
+endif()
+
+if(VERITAS_BUILD_TOOLS)
+  add_subdirectory(tools)
 endif()
 
 if(BUILD_TESTING)
