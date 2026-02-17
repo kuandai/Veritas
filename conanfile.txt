@@ -24,3 +24,5 @@ grpc/*:php_plugin=False
 grpc/*:python_plugin=False
 grpc/*:ruby_plugin=False
 cyrus-sasl/*:with_gdbm=True
+redis-plus-plus/*:with_tls=True
+hiredis/*:with_ssl=True

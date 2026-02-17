@@ -44,6 +44,23 @@ class TokenStoreError : public std::runtime_error {
   Kind kind_;
 };
 
+struct RedisConnectionConfig {
+  std::string host;
+  int port = 6379;
+  int db = 0;
+  std::string username;
+  std::string password;
+  bool use_tls = false;
+  bool tls_verify_peer = true;
+  std::string tls_ca_cert_path;
+  std::string tls_ca_cert_dir;
+  std::string tls_cert_path;
+  std::string tls_key_path;
+  std::string tls_sni;
+};
+
+RedisConnectionConfig ParseRedisConnectionConfig(const std::string& uri);
+
 class InMemoryTokenStore final : public TokenStore {
  public:
   void PutToken(const TokenRecord& record) override;
