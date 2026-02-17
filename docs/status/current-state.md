@@ -114,6 +114,9 @@ Implemented
   - Session ids stored in a TTL cache and consumed atomically on `FinishAuth`.
   - Refresh token issuance + SHA-256 hashing, persisted to Redis when
     `TOKEN_STORE_URI` is set (in-memory fallback otherwise).
+  - Redis URI parser supports `redis://` and `rediss://` with fail-closed TLS
+    validation (`verify_peer=true` requires `cacert`/`cacertdir`; client cert
+    auth requires both `cert` and `key`).
 
 Placeholders / incomplete
 - SASL verifier provisioning depends on external sasldb/auxprop setup.
@@ -123,7 +126,7 @@ Placeholders / incomplete
   via config/env is not implemented.
 - Redis token store adapter exists; persistence is optional via
   `TOKEN_STORE_URI` (in-memory fallback otherwise).
-- Redis TLS (`rediss://`) is not supported yet.
+- Redis TLS requires `redis-plus-plus` to be built with TLS support.
 - SASL error mapping is limited to a minimal gRPC status translation.
 - Unit tests cover fake salt, token hashing, rate limiting, config validation,
   TLS credential validation, token store behavior, and session cache handling.

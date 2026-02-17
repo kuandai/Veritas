@@ -37,6 +37,10 @@ Authenticate clients and issue refresh tokens via a gRPC interface.
   - Session ids stored in a TTL cache and consumed atomically on `FinishAuth`.
   - Refresh token issuance + SHA-256 hashing stored in Redis when
     `TOKEN_STORE_URI` is set (in-memory fallback otherwise).
+  - Redis URI parsing supports `redis://` and `rediss://`.
+    `rediss://` enforces fail-closed TLS config validation:
+    `verify_peer=true` (default) requires `cacert` or `cacertdir` query
+    parameters; client cert auth requires both `cert` and `key`.
 
 ## Configuration notes
 
@@ -66,6 +70,13 @@ For SRP, set `SASL_REALM` and ensure the client authid is realm-qualified
 (`user@realm`); the client library now appends `@<realm>` automatically when
 `SASL_REALM` is set.
 
+Redis token-store URIs:
+
+- `redis://[:password@]host:port/db`
+- `rediss://[user[:password]@]host:port/db?cacert=/path/ca.pem`
+- Optional `rediss://` query parameters: `cacertdir`, `cert`, `key`, `sni`,
+  `verify_peer` (`true`/`false`, default `true`).
+
 ## Placeholders / incomplete
 
 - SASL SRP handshake depends on external SASL configuration (sasldb/auxprop);
@@ -78,7 +89,8 @@ For SRP, set `SASL_REALM` and ensure the client authid is realm-qualified
   strict constant-size envelope encoding for all responses is not implemented.
 - Redis token store adapter exists; persistence is optional via
   `TOKEN_STORE_URI` (in-memory fallback otherwise).
-- Redis TLS (`rediss://`) is not supported yet.
+- Redis TLS requires a `redis-plus-plus` build with TLS enabled; Gatekeeper
+  fails closed when `rediss://` is configured without TLS-capable client libs.
 - gRPC error mapping is limited to current SASL status handling.
 - Unit tests cover fake salt, token hashing, rate limiting, config validation,
   TLS credential validation, token store behavior, and session cache handling.

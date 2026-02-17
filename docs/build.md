@@ -32,6 +32,9 @@ cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake
 cmake --build build
 ```
 
+`conanfile.txt` enables Redis TLS-capable dependencies by default:
+`redis-plus-plus/*:with_tls=True` and `hiredis/*:with_ssl=True`.
+
 ## 3. Run tests
 
 To include gRPC/SASL integration tests:
@@ -64,3 +67,16 @@ file path).
 
 `scripts/lock.sh` will generate `conan.lock`. It requires access to the Conan
 remotes configured for dependency resolution.
+
+## 7. Redis TLS configuration
+
+When enabling Redis persistence (`TOKEN_STORE_URI`), Gatekeeper accepts:
+
+- `redis://[:password@]host:port/db`
+- `rediss://[user[:password]@]host:port/db?...`
+
+For `rediss://`:
+
+- `verify_peer=true` (default) requires `cacert` or `cacertdir`.
+- Client-auth requires both `cert` and `key`.
+- Optional `sni` can override TLS SNI host.
