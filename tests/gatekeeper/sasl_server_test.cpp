@@ -74,6 +74,38 @@ TEST(SaslServerTest, BeginAuthAcceptsLargeUsername) {
   EXPECT_TRUE(status.ok());
 }
 
+TEST(SaslServerTest, BeginAuthUsesConfiguredFakeChallengeSize) {
+  SaslServerOptions options = DefaultOptions();
+  options.fake_challenge_size = 96;
+  SaslServer server(options);
+
+  veritas::auth::v1::BeginAuthRequest request;
+  veritas::auth::v1::BeginAuthResponse response;
+  request.set_login_username("alice");
+
+  const grpc::Status status = server.BeginAuth(request, &response);
+  ASSERT_TRUE(status.ok());
+  EXPECT_EQ(response.server_public().size(), 96u);
+}
+
+TEST(SaslServerTest, BeginAuthHonorsMinimumLatencyBudget) {
+  SaslServerOptions options = DefaultOptions();
+  options.begin_auth_min_duration = std::chrono::milliseconds(15);
+  SaslServer server(options);
+
+  veritas::auth::v1::BeginAuthRequest request;
+  veritas::auth::v1::BeginAuthResponse response;
+  request.set_login_username("alice");
+
+  const auto started = std::chrono::steady_clock::now();
+  const grpc::Status status = server.BeginAuth(request, &response);
+  const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - started);
+
+  ASSERT_TRUE(status.ok());
+  EXPECT_GE(elapsed.count(), 10);
+}
+
 TEST(SaslServerTest, FinishAuthRejectsEmptySessionId) {
   SaslServer server(DefaultOptions());
   veritas::auth::v1::FinishAuthRequest request;

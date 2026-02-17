@@ -1,5 +1,6 @@
 #include "sasl_server.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -9,6 +10,7 @@
 #include <string>
 #include <string_view>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -202,6 +204,35 @@ bool TestAuthBypassEnabled(const SaslServerOptions& options) {
 #endif
 }
 
+constexpr std::size_t kMinChallengeSize = 32;
+constexpr std::size_t kMaxChallengeSize = 4096;
+
+std::size_t ClampChallengeSize(std::size_t size) {
+  return std::clamp(size, kMinChallengeSize, kMaxChallengeSize);
+}
+
+class BeginAuthLatencyPad {
+ public:
+  explicit BeginAuthLatencyPad(std::chrono::milliseconds min_duration)
+      : min_duration_(min_duration),
+        started_(std::chrono::steady_clock::now()) {}
+
+  ~BeginAuthLatencyPad() {
+    if (min_duration_.count() <= 0) {
+      return;
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - started_);
+    if (elapsed < min_duration_) {
+      std::this_thread::sleep_for(min_duration_ - elapsed);
+    }
+  }
+
+ private:
+  std::chrono::milliseconds min_duration_;
+  std::chrono::steady_clock::time_point started_;
+};
+
 std::string SelectMechanism(const std::string& mech_list) {
   if (mech_list.empty()) {
     return "SRP";
@@ -313,7 +344,11 @@ struct SaslContext {};
 SaslServer::SaslServer(SaslServerOptions options)
     : options_(std::move(options)),
       session_cache_(options_.session_ttl),
-      fake_salt_(options_.fake_salt_secret) {
+      fake_salt_(options_.fake_salt_secret),
+      observed_challenge_size_(ClampChallengeSize(options_.fake_challenge_size)) {
+  if (options_.begin_auth_min_duration.count() < 0) {
+    options_.begin_auth_min_duration = std::chrono::milliseconds(0);
+  }
   const bool test_auth_bypass = TestAuthBypassEnabled(options_);
   if (!options_.enable_sasl && !test_auth_bypass) {
     throw std::runtime_error(
@@ -389,6 +424,8 @@ grpc::Status SaslServer::BeginAuth(
                         "login_username is required");
   }
 
+  BeginAuthLatencyPad latency_pad(options_.begin_auth_min_duration);
+
   try {
     session_cache_.CleanupExpired();
     const auto now = std::chrono::system_clock::now();
@@ -405,7 +442,8 @@ grpc::Status SaslServer::BeginAuth(
                          now + options_.session_ttl, nullptr, false};
       session_cache_.Insert(session);
 
-      std::string server_public = GenerateRandomBytes(32);
+      std::string server_public = GenerateRandomBytes(
+          observed_challenge_size_.load(std::memory_order_relaxed));
       response->set_salt(response_salt);
       response->set_server_public(server_public);
       response->set_session_id(session_id);
@@ -462,7 +500,8 @@ grpc::Status SaslServer::BeginAuth(
       SrpSession session{session_id, request.login_username(),
                          now + options_.session_ttl, nullptr, true};
       session_cache_.Insert(session);
-      std::string server_public = GenerateRandomBytes(32);
+      std::string server_public = GenerateRandomBytes(
+          observed_challenge_size_.load(std::memory_order_relaxed));
       response->set_salt(response_salt);
       response->set_server_public(server_public);
       response->set_session_id(session_id);
@@ -487,6 +526,9 @@ grpc::Status SaslServer::BeginAuth(
                        now + options_.session_ttl, handle, false};
     session_cache_.Insert(session);
     if (server_out && server_out_len > 0) {
+      observed_challenge_size_.store(
+          ClampChallengeSize(static_cast<std::size_t>(server_out_len)),
+          std::memory_order_relaxed);
       response->set_server_public(std::string(server_out, server_out_len));
     } else {
       response->set_server_public("");

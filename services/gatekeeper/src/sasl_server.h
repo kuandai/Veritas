@@ -1,6 +1,8 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <grpcpp/grpcpp.h>
 #include <memory>
 #include <string>
@@ -27,6 +29,9 @@ struct SaslServerOptions {
   std::string sasl_dbname;
   std::string sasl_realm;
   bool skip_sasl_init = false;
+  std::size_t fake_challenge_size = 512;
+  std::chrono::milliseconds begin_auth_min_duration{
+      std::chrono::milliseconds(8)};
 #if defined(VERITAS_ENABLE_TEST_AUTH_BYPASS)
   bool allow_test_auth_bypass = false;
 #endif
@@ -49,6 +54,7 @@ class SaslServer {
   SaslServerOptions options_;
   SessionCache session_cache_;
   FakeSaltGenerator fake_salt_;
+  std::atomic<std::size_t> observed_challenge_size_;
   std::shared_ptr<TokenStore> token_store_;
   std::unique_ptr<SaslContext> sasl_context_;
 };

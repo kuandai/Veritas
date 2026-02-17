@@ -508,6 +508,8 @@ TEST(SaslIntegrationTest, BeginAuthKnownAndUnknownHaveEquivalentPublicShape) {
   EXPECT_EQ(known_response.salt().size(), unknown_response.salt().size());
   EXPECT_FALSE(known_response.server_public().empty());
   EXPECT_FALSE(unknown_response.server_public().empty());
+  EXPECT_EQ(known_response.server_public().size(),
+            unknown_response.server_public().size());
   EXPECT_EQ(known_response.params().group(), unknown_response.params().group());
   EXPECT_EQ(known_response.params().hash(), unknown_response.params().hash());
 }
