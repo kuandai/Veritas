@@ -25,8 +25,12 @@ Authenticate clients and issue refresh tokens via a gRPC interface.
     and is required.
   - `BeginAuth` responses always include a deterministic per-username fake salt
     to reduce username enumeration signals.
+  - `BeginAuth` enforces a minimum response-duration budget (default: 8ms)
+    before returning.
   - Unknown users receive a fake challenge and are marked for rejection during
-    `FinishAuth`; clients still use the SASL challenge payload to compute proofs.
+    `FinishAuth`; fake challenge size is normalized to the observed SASL
+    challenge-size baseline (default seed: 512 bytes).
+    Clients still use the SASL challenge payload to compute proofs.
   - `FinishAuth` validates the client proof via SASL and returns the SASL
     server final payload in `server_proof` (accepting SRP's final
     `SASL_CONTINUE` as success when a server proof is present).
@@ -70,8 +74,8 @@ For SRP, set `SASL_REALM` and ensure the client authid is realm-qualified
   `saslpasswd2` to avoid the upstream SRP `sasl_setpass` crash.
 - Rate-limiter and analytics key caps use code-level defaults; runtime tuning
   via config/env is not implemented.
-- `BeginAuth` still returns mechanism-generated challenge payload sizes; strict
-  constant-size/timing padding for all responses is not implemented.
+- `BeginAuth` still returns mechanism-generated challenge bytes for real users;
+  strict constant-size envelope encoding for all responses is not implemented.
 - Redis token store adapter exists; persistence is optional via
   `TOKEN_STORE_URI` (in-memory fallback otherwise).
 - Redis TLS (`rediss://`) is not supported yet.

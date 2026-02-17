@@ -105,6 +105,9 @@ Implemented
 - SASL SRP-6a handshake via Cyrus SASL:
   - SASL server challenge returned in `server_public` (opaque payload).
   - Deterministic fake salts in all `BeginAuth` responses.
+  - `BeginAuth` enforces a minimum response-duration budget (default: 8ms).
+  - Unknown-user fake challenges are sized using an observed challenge-size
+    baseline (default seed: 512 bytes).
   - SASL server final payload returned in `server_proof`.
   - `BeginAuthRequest.client_start` carries the SASL client initial response.
   - Runtime `SASL_ENABLE=false` is rejected at startup in this build.
@@ -114,8 +117,8 @@ Implemented
 
 Placeholders / incomplete
 - SASL verifier provisioning depends on external sasldb/auxprop setup.
-- `BeginAuth` challenge payload size still depends on the underlying SASL
-  mechanism output; strict size/timing padding is not implemented.
+- `BeginAuth` returns mechanism-generated challenge bytes for real users;
+  strict constant-size envelope encoding is not implemented.
 - Rate-limiter and analytics key caps use code-level defaults; runtime tuning
   via config/env is not implemented.
 - Redis token store adapter exists; persistence is optional via
