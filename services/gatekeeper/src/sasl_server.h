@@ -27,6 +27,9 @@ struct SaslServerOptions {
   std::string sasl_dbname;
   std::string sasl_realm;
   bool skip_sasl_init = false;
+#if defined(VERITAS_ENABLE_TEST_AUTH_BYPASS)
+  bool allow_test_auth_bypass = false;
+#endif
 };
 
 class SaslServer {

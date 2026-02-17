@@ -242,7 +242,13 @@ struct SaslSetupResult {
   std::string message;
 };
 
+int EnsureClientInit();
+
 SaslSetupResult EnsureUserExists(SaslFixture& fixture) {
+  if (EnsureClientInit() != SASL_OK) {
+    return {SaslSetupResultKind::Fail, "SASL client initialization failed"};
+  }
+
   veritas::auth::v1::BeginAuthRequest warmup_request;
   veritas::auth::v1::BeginAuthResponse warmup_response;
   const std::string warmup_user =
@@ -302,8 +308,8 @@ SaslSetupResult EnsureUserExists(SaslFixture& fixture) {
   const char* realm = fixture.options.sasl_realm.empty()
                            ? nullptr
                            : fixture.options.sasl_realm.c_str();
-  int rc = sasl_server_new(fixture.options.sasl_service.c_str(), nullptr, realm,
-                           nullptr, nullptr, nullptr, 0, &conn);
+  rc = sasl_server_new(fixture.options.sasl_service.c_str(), nullptr, realm,
+                       nullptr, nullptr, nullptr, 0, &conn);
   if (rc != SASL_OK) {
     return {SaslSetupResultKind::Skip,
             "SASL server init unavailable for setpass"};
@@ -419,6 +425,91 @@ TEST(SaslIntegrationTest, SrpHandshakeHappyPath) {
   EXPECT_EQ(rc, SASL_OK);
 
   sasl_dispose(&client_conn);
+}
+
+TEST(SaslIntegrationTest, BeginAuthKnownAndUnknownHaveEquivalentPublicShape) {
+  SaslFixture fixture;
+  const auto setup = EnsureUserExists(fixture);
+  if (setup.kind == SaslSetupResultKind::Skip) {
+    GTEST_SKIP() << setup.message;
+  }
+  ASSERT_EQ(setup.kind, SaslSetupResultKind::Ok) << setup.message;
+  if (EnsureClientInit() != SASL_OK) {
+    GTEST_SKIP() << "SASL client initialization failed";
+  }
+
+  auto begin_auth = [&](const std::string& username, const std::string& password,
+                        veritas::auth::v1::BeginAuthResponse* response) {
+    ClientCreds creds{username, password};
+    sasl_callback_t callbacks[] = {
+        {SASL_CB_AUTHNAME, reinterpret_cast<int (*)(void)>(&SaslGetSimple),
+         &creds},
+        {SASL_CB_USER, reinterpret_cast<int (*)(void)>(&SaslGetSimple), &creds},
+        {SASL_CB_PASS, reinterpret_cast<int (*)(void)>(&SaslGetSecret), &creds},
+        {SASL_CB_LIST_END, nullptr, nullptr},
+    };
+
+    sasl_conn_t* client_conn = nullptr;
+    int rc = sasl_client_new(fixture.options.sasl_service.c_str(), "localhost",
+                             nullptr, nullptr, callbacks, 0, &client_conn);
+    if (rc != SASL_OK) {
+      return grpc::Status(grpc::StatusCode::INTERNAL,
+                          "SASL client init failed");
+    }
+
+    const char* client_out = nullptr;
+    unsigned client_out_len = 0;
+    const char* mech = nullptr;
+    rc = sasl_client_start(client_conn, "SRP", nullptr, &client_out,
+                           &client_out_len, &mech);
+    if (rc == SASL_NOMECH) {
+      sasl_dispose(&client_conn);
+      return grpc::Status(grpc::StatusCode::UNAVAILABLE,
+                          "SRP mechanism not available for client");
+    }
+    if (rc != SASL_CONTINUE && rc != SASL_OK) {
+      sasl_dispose(&client_conn);
+      return grpc::Status(grpc::StatusCode::INTERNAL, "SASL client start failed");
+    }
+    if (!client_out || client_out_len == 0) {
+      sasl_dispose(&client_conn);
+      return grpc::Status(grpc::StatusCode::INTERNAL,
+                          "SASL client start returned empty payload");
+    }
+
+    veritas::auth::v1::BeginAuthRequest request;
+    request.set_login_username(username);
+    request.set_client_start(std::string(client_out, client_out_len));
+    const grpc::Status status = fixture.server->BeginAuth(request, response);
+    sasl_dispose(&client_conn);
+    return status;
+  };
+
+  veritas::auth::v1::BeginAuthResponse known_response;
+  const grpc::Status known_status =
+      begin_auth(fixture.username, fixture.password, &known_response);
+  if (!known_status.ok() && IsSrpUnavailable(known_status)) {
+    GTEST_SKIP() << "SRP mechanism not available in SASL build";
+  }
+  ASSERT_TRUE(known_status.ok()) << known_status.error_message();
+
+  veritas::auth::v1::BeginAuthResponse unknown_response;
+  const std::string unknown_user =
+      QualifyUser("missing_" + RandomSuffix(), fixture.options.sasl_realm);
+  const grpc::Status unknown_status = begin_auth(
+      unknown_user, "pass_" + RandomSuffix(), &unknown_response);
+  if (!unknown_status.ok() && IsSrpUnavailable(unknown_status)) {
+    GTEST_SKIP() << "SRP mechanism not available in SASL build";
+  }
+  ASSERT_TRUE(unknown_status.ok()) << unknown_status.error_message();
+
+  EXPECT_FALSE(known_response.salt().empty());
+  EXPECT_FALSE(unknown_response.salt().empty());
+  EXPECT_EQ(known_response.salt().size(), unknown_response.salt().size());
+  EXPECT_FALSE(known_response.server_public().empty());
+  EXPECT_FALSE(unknown_response.server_public().empty());
+  EXPECT_EQ(known_response.params().group(), unknown_response.params().group());
+  EXPECT_EQ(known_response.params().hash(), unknown_response.params().hash());
 }
 
 TEST(SaslIntegrationTest, InvalidProofIsUnauthenticated) {

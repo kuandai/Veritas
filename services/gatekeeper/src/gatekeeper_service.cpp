@@ -8,6 +8,8 @@
 #include <string_view>
 #include <utility>
 
+#include "log_utils.h"
+
 namespace veritas::auth::v1 {
 
 namespace {
@@ -62,10 +64,12 @@ void LogAuthEvent(std::string_view ip,
   std::ostringstream stream;
   stream << "{"
          << "\"timestamp\":\"" << FormatTimestamp(std::chrono::system_clock::now())
-         << "\",\"ip\":\"" << ip << "\",\"action\":\"" << action
+         << "\",\"ip\":\"" << veritas::gatekeeper::JsonEscape(ip)
+         << "\",\"action\":\"" << veritas::gatekeeper::JsonEscape(action)
          << "\",\"status\":\"" << status.error_code() << "\"";
   if (!user_uuid.empty()) {
-    stream << ",\"user_uuid\":\"" << user_uuid << "\"";
+    stream << ",\"user_uuid\":\""
+           << veritas::gatekeeper::JsonEscape(user_uuid) << "\"";
   }
   stream << "}";
   std::cout << stream.str() << std::endl;

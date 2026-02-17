@@ -23,6 +23,23 @@ TEST(SessionCacheTest, InsertGetErase) {
   EXPECT_FALSE(cache.Get("session-1").has_value());
 }
 
+TEST(SessionCacheTest, TakeConsumesSessionAtomically) {
+  SessionCache cache(std::chrono::seconds(5));
+  SrpSession session;
+  session.session_id = "session-1";
+  session.login_username = "alice";
+  session.expires_at = std::chrono::system_clock::now() +
+                       std::chrono::seconds(5);
+
+  cache.Insert(session);
+
+  const auto taken = cache.Take("session-1");
+  ASSERT_TRUE(taken.has_value());
+  EXPECT_EQ(taken->login_username, "alice");
+  EXPECT_FALSE(cache.Get("session-1").has_value());
+  EXPECT_FALSE(cache.Take("session-1").has_value());
+}
+
 TEST(SessionCacheTest, CleanupExpiredRemovesEntries) {
   SessionCache cache(std::chrono::seconds(1));
   SrpSession expired;

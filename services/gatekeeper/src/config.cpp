@@ -70,6 +70,11 @@ GatekeeperConfig LoadConfig() {
   config.sasl_dbname = GetEnvOrEmpty("SASL_DBNAME");
   config.sasl_realm = GetEnvOrEmpty("SASL_REALM");
 
+  if (!config.enable_sasl) {
+    throw std::runtime_error(
+        "SASL_ENABLE=false is not permitted; authentication must remain enabled");
+  }
+
   if (config.bind_addr.empty()) {
     throw std::runtime_error("BIND_ADDR is required");
   }

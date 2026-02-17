@@ -5,15 +5,19 @@ option(VERITAS_ENABLE_PROTO_TESTS "Enable protobuf/gRPC-dependent tests" OFF)
 
 set(VERITAS_TEST_SOURCES
   main.cpp
+  gatekeeper/auth_metrics_test.cpp
   gatekeeper/fake_salt_test.cpp
   gatekeeper/config_test.cpp
+  gatekeeper/log_utils_test.cpp
   gatekeeper/rate_limiter_test.cpp
   gatekeeper/session_cache_test.cpp
   gatekeeper/tls_utils_test.cpp
   gatekeeper/token_store_test.cpp
   gatekeeper/token_utils_test.cpp
+  ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/auth_metrics.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/config.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/fake_salt.cpp
+  ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/log_utils.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/rate_limiter.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/secure_erase.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/session_cache.cpp
@@ -63,6 +67,7 @@ target_compile_definitions(veritas_gatekeeper_tests
   PRIVATE
     VERITAS_DISABLE_SASL
     VERITAS_DISABLE_REDIS
+    VERITAS_ENABLE_TEST_AUTH_BYPASS
 )
 
 add_dependencies(veritas_gatekeeper_tests veritas_protocol)
@@ -118,11 +123,13 @@ if(VERITAS_ENABLE_PROTO_TESTS)
   set(VERITAS_LIBVERITAS_TEST_SOURCES
     main.cpp
     libveritas/secure_string_test.cpp
+    libveritas/gatekeeper_client_test.cpp
     libveritas/sasl_client_test.cpp
     libveritas/auth_flow_integration_test.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/auth_metrics.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/fake_salt.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/gatekeeper_service.cpp
+    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/log_utils.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/rate_limiter.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/sasl_server.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/secure_erase.cpp

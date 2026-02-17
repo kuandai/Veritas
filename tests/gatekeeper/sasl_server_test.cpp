@@ -1,9 +1,13 @@
 #include "sasl_server.h"
 
+#include <array>
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
+#include <thread>
 
 #include <grpcpp/grpcpp.h>
 #include <gtest/gtest.h>
@@ -34,10 +38,22 @@ SaslServerOptions DefaultOptions() {
   options.fake_salt_secret = "test-secret";
   options.token_ttl_days = 1;
   options.skip_sasl_init = true;
+#if defined(VERITAS_ENABLE_TEST_AUTH_BYPASS)
+  options.allow_test_auth_bypass = true;
+#endif
   return options;
 }
 
 }  // namespace
+
+TEST(SaslServerTest, ConstructorRejectsAuthBypassWithoutExplicitTestFlag) {
+  SaslServerOptions options = DefaultOptions();
+  options.enable_sasl = false;
+#if defined(VERITAS_ENABLE_TEST_AUTH_BYPASS)
+  options.allow_test_auth_bypass = false;
+#endif
+  EXPECT_THROW(SaslServer server(options), std::runtime_error);
+}
 
 TEST(SaslServerTest, BeginAuthRejectsEmptyUsername) {
   SaslServer server(DefaultOptions());
@@ -132,6 +148,48 @@ TEST(SaslServerTest, FinishAuthSessionReplayFails) {
   veritas::auth::v1::FinishAuthResponse second_response;
   const grpc::Status status = server.FinishAuth(finish_request, &second_response);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::UNAUTHENTICATED);
+}
+
+TEST(SaslServerTest, FinishAuthConcurrentCallsAllowSingleSuccess) {
+  SaslServer server(DefaultOptions());
+  veritas::auth::v1::BeginAuthRequest begin_request;
+  veritas::auth::v1::BeginAuthResponse begin_response;
+  begin_request.set_login_username("alice");
+  ASSERT_TRUE(server.BeginAuth(begin_request, &begin_response).ok());
+
+  veritas::auth::v1::FinishAuthRequest finish_request;
+  finish_request.set_session_id(begin_response.session_id());
+  finish_request.set_client_proof("proof");
+
+  std::array<grpc::Status, 2> statuses{
+      grpc::Status::OK, grpc::Status::OK};
+  std::array<veritas::auth::v1::FinishAuthResponse, 2> responses;
+
+  std::atomic<int> ready{0};
+  auto run = [&](std::size_t index) {
+    ready.fetch_add(1, std::memory_order_release);
+    while (ready.load(std::memory_order_acquire) < 2) {
+      std::this_thread::yield();
+    }
+    statuses[index] = server.FinishAuth(finish_request, &responses[index]);
+  };
+
+  std::thread first(run, 0);
+  std::thread second(run, 1);
+  first.join();
+  second.join();
+
+  int success_count = 0;
+  int unauthenticated_count = 0;
+  for (const auto& status : statuses) {
+    if (status.ok()) {
+      ++success_count;
+    } else if (status.error_code() == grpc::StatusCode::UNAUTHENTICATED) {
+      ++unauthenticated_count;
+    }
+  }
+  EXPECT_EQ(success_count, 1);
+  EXPECT_EQ(unauthenticated_count, 1);
 }
 
 TEST(SaslServerTest, TokenStoreUnavailableMapsToGrpcUnavailable) {

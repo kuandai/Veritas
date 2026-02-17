@@ -39,6 +39,7 @@ class SessionCache {
 
   void Insert(const SrpSession& session);
   std::optional<SrpSession> Get(const std::string& session_id);
+  std::optional<SrpSession> Take(const std::string& session_id);
   void Erase(const std::string& session_id);
   void CleanupExpired();
 

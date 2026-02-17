@@ -33,6 +33,17 @@ std::optional<SrpSession> SessionCache::Get(const std::string& session_id) {
   return it->second;
 }
 
+std::optional<SrpSession> SessionCache::Take(const std::string& session_id) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = sessions_.find(session_id);
+  if (it == sessions_.end()) {
+    return std::nullopt;
+  }
+  SrpSession result = it->second;
+  sessions_.erase(it);
+  return result;
+}
+
 void SessionCache::Erase(const std::string& session_id) {
   std::lock_guard<std::mutex> lock(mutex_);
   sessions_.erase(session_id);

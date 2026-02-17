@@ -76,6 +76,13 @@ TEST(ConfigTest, LoadConfigAcceptsClientCertsWithBundle) {
   EXPECT_NO_THROW(LoadConfig());
 }
 
+TEST(ConfigTest, LoadConfigRejectsSaslDisabled) {
+  RequiredEnv env;
+  ScopedEnv disable_sasl("SASL_ENABLE", "false");
+
+  EXPECT_THROW(LoadConfig(), std::runtime_error);
+}
+
 TEST(ConfigTest, ReadFileReturnsContents) {
   const std::string path = TempPath("veritas_readfile");
   {

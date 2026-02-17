@@ -193,6 +193,15 @@ bool IsDebugEnabled() {
          std::strcmp(env, "no") != 0;
 }
 
+bool TestAuthBypassEnabled(const SaslServerOptions& options) {
+#if defined(VERITAS_ENABLE_TEST_AUTH_BYPASS)
+  return options.allow_test_auth_bypass;
+#else
+  (void)options;
+  return false;
+#endif
+}
+
 std::string SelectMechanism(const std::string& mech_list) {
   if (mech_list.empty()) {
     return "SRP";
@@ -305,6 +314,22 @@ SaslServer::SaslServer(SaslServerOptions options)
     : options_(std::move(options)),
       session_cache_(options_.session_ttl),
       fake_salt_(options_.fake_salt_secret) {
+  const bool test_auth_bypass = TestAuthBypassEnabled(options_);
+  if (!options_.enable_sasl && !test_auth_bypass) {
+    throw std::runtime_error(
+        "SASL_ENABLE=false is not permitted in this build");
+  }
+  if (options_.skip_sasl_init && !test_auth_bypass) {
+    throw std::runtime_error(
+        "skip_sasl_init is test-only and cannot be used in this build");
+  }
+#if defined(VERITAS_DISABLE_SASL)
+  if (!test_auth_bypass) {
+    throw std::runtime_error(
+        "Gatekeeper was built without SASL support");
+  }
+#endif
+
   if (options_.token_store) {
     token_store_ = std::move(options_.token_store);
   } else {
@@ -368,14 +393,20 @@ grpc::Status SaslServer::BeginAuth(
     session_cache_.CleanupExpired();
     const auto now = std::chrono::system_clock::now();
     const std::string session_id = GenerateSessionId();
+    const std::string response_salt =
+        fake_salt_.Generate(request.login_username());
     if (!UseSasl()) {
+      if (!TestAuthBypassEnabled(options_)) {
+        return grpc::Status(
+            grpc::StatusCode::FAILED_PRECONDITION,
+            "SASL authentication is required in this build");
+      }
       SrpSession session{session_id, request.login_username(),
                          now + options_.session_ttl, nullptr, false};
       session_cache_.Insert(session);
 
-      std::string salt = fake_salt_.Generate(request.login_username());
       std::string server_public = GenerateRandomBytes(32);
-      response->set_salt(salt);
+      response->set_salt(response_salt);
       response->set_server_public(server_public);
       response->set_session_id(session_id);
       auto* params = response->mutable_params();
@@ -431,9 +462,8 @@ grpc::Status SaslServer::BeginAuth(
       SrpSession session{session_id, request.login_username(),
                          now + options_.session_ttl, nullptr, true};
       session_cache_.Insert(session);
-      std::string salt = fake_salt_.Generate(request.login_username());
       std::string server_public = GenerateRandomBytes(32);
-      response->set_salt(salt);
+      response->set_salt(response_salt);
       response->set_server_public(server_public);
       response->set_session_id(session_id);
       auto* params = response->mutable_params();
@@ -463,7 +493,7 @@ grpc::Status SaslServer::BeginAuth(
     }
     LogSaslProp(conn, SASL_USERNAME, "username");
     LogSaslProp(conn, SASL_AUTHUSER, "authuser");
-    response->set_salt("");
+    response->set_salt(response_salt);
     response->set_session_id(session_id);
     auto* params = response->mutable_params();
     params->set_group("rfc5054-4096");
@@ -490,13 +520,12 @@ grpc::Status SaslServer::FinishAuth(
   }
 
   session_cache_.CleanupExpired();
-  const auto session = session_cache_.Get(request.session_id());
+  const auto session = session_cache_.Take(request.session_id());
   if (!session) {
     return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
                         "session not found");
   }
   if (session->is_fake) {
-    session_cache_.Erase(request.session_id());
     return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
                         "invalid credentials");
   }
@@ -506,6 +535,11 @@ grpc::Status SaslServer::FinishAuth(
     const auto expires_at =
         now + std::chrono::hours(24 * options_.token_ttl_days);
     if (!UseSasl()) {
+      if (!TestAuthBypassEnabled(options_)) {
+        return grpc::Status(
+            grpc::StatusCode::FAILED_PRECONDITION,
+            "SASL authentication is required in this build");
+      }
       std::string refresh_token = GenerateRefreshToken();
       const std::string token_hash = HashTokenSha256(refresh_token);
       const std::string user_uuid = "mock-" + session->session_id;
@@ -525,7 +559,6 @@ grpc::Status SaslServer::FinishAuth(
               .count();
       ts->set_seconds(static_cast<int64_t>(seconds));
       ts->set_nanos(0);
-      session_cache_.Erase(request.session_id());
       SecureErase(&refresh_token);
       SecureErase(&server_proof);
       return grpc::Status::OK;
@@ -537,7 +570,6 @@ grpc::Status SaslServer::FinishAuth(
       return grpc::Status(grpc::StatusCode::INTERNAL, g_sasl_init_error);
     }
     if (!session->sasl_conn) {
-      session_cache_.Erase(request.session_id());
       return grpc::Status(grpc::StatusCode::INTERNAL,
                           "missing SASL session");
     }
@@ -560,7 +592,6 @@ grpc::Status SaslServer::FinishAuth(
       LogSaslDetail(session->sasl_conn->get(), "sasl_server_step", result);
       LogSaslProp(session->sasl_conn->get(), SASL_USERNAME, "username");
       LogSaslProp(session->sasl_conn->get(), SASL_AUTHUSER, "authuser");
-      session_cache_.Erase(request.session_id());
       if (result == SASL_CONTINUE) {
         return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
                             "SASL requires additional steps");
@@ -599,7 +630,6 @@ grpc::Status SaslServer::FinishAuth(
             .count();
     ts->set_seconds(static_cast<int64_t>(seconds));
     ts->set_nanos(0);
-    session_cache_.Erase(request.session_id());
     SecureErase(&refresh_token);
     SecureErase(&server_proof);
     return grpc::Status::OK;
