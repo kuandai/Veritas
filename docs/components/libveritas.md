@@ -14,6 +14,8 @@ token rotation callbacks, and a security context for transport layers (TLS/QUIC)
   - `SaslClient` wraps Cyrus SASL SRP and scrubs password buffers.
   - `GatekeeperClient` wraps gRPC BeginAuth/FinishAuth calls.
   - `AuthFlow` orchestrates SRP proofs across gRPC + SASL.
+  - `GatekeeperClientConfig.allow_insecure` is accepted in non-release builds;
+    release builds reject insecure transport.
 - `get_quic_context()` returns a default/empty `SecurityContext`.
 
 ## Placeholders / incomplete

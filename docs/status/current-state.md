@@ -40,6 +40,8 @@ Implemented
 - `IdentityManager` type with basic callbacks and an SRP auth API.
 - `AuthFlow`, `GatekeeperClient`, and `SaslClient` for SRP-6a login via Gatekeeper.
 - Password buffers are scrubbed with `sodium_memzero` in the SASL client.
+- `GatekeeperClientConfig.allow_insecure` is accepted in non-release builds;
+  release builds reject insecure transport.
 
 Placeholders / incomplete
 - `SecurityContext` is empty beyond an `SSL_CTX*`.
@@ -93,21 +95,29 @@ Implemented
   optional chain verification with CA bundle).
 - Optional mTLS enforcement with client cert verification.
 - `BeginAuth` and `FinishAuth` handlers are present.
-- Per-IP rate limiting (5/minute).
+- Per-IP rate limiting (5/minute) with oldest-bucket eviction when the
+  in-memory key cap is reached (default: 10,000 keys).
 - Structured auth event logging to stdout (`timestamp`, `ip`, `action`,
-  `status`, `user_uuid?`).
-- In-memory auth analytics counters (success/failure per IP and UUID).
+  `status`, `user_uuid?`) with JSON escaping for untrusted field values.
+- In-memory auth analytics counters (success/failure per IP and UUID) with
+  bounded key cardinality and oldest-entry eviction (default: 10,000 keys per
+  map).
 - SASL SRP-6a handshake via Cyrus SASL:
   - SASL server challenge returned in `server_public` (opaque payload).
-  - Deterministic fake salts for unknown users.
+  - Deterministic fake salts in all `BeginAuth` responses.
   - SASL server final payload returned in `server_proof`.
   - `BeginAuthRequest.client_start` carries the SASL client initial response.
-  - Session ids stored in a TTL cache.
+  - Runtime `SASL_ENABLE=false` is rejected at startup in this build.
+  - Session ids stored in a TTL cache and consumed atomically on `FinishAuth`.
   - Refresh token issuance + SHA-256 hashing, persisted to Redis when
     `TOKEN_STORE_URI` is set (in-memory fallback otherwise).
 
 Placeholders / incomplete
 - SASL verifier provisioning depends on external sasldb/auxprop setup.
+- `BeginAuth` challenge payload size still depends on the underlying SASL
+  mechanism output; strict size/timing padding is not implemented.
+- Rate-limiter and analytics key caps use code-level defaults; runtime tuning
+  via config/env is not implemented.
 - Redis token store adapter exists; persistence is optional via
   `TOKEN_STORE_URI` (in-memory fallback otherwise).
 - Redis TLS (`rediss://`) is not supported yet.
