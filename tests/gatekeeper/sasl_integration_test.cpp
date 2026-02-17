@@ -249,6 +249,37 @@ SaslSetupResult EnsureUserExists(SaslFixture& fixture) {
     return {SaslSetupResultKind::Fail, "SASL client initialization failed"};
   }
 
+  sasl_conn_t* conn = nullptr;
+  const char* realm = fixture.options.sasl_realm.empty()
+                           ? nullptr
+                           : fixture.options.sasl_realm.c_str();
+  int rc = sasl_server_new(fixture.options.sasl_service.c_str(), nullptr, realm,
+                           nullptr, nullptr, nullptr, 0, &conn);
+  if (rc != SASL_OK) {
+    return {SaslSetupResultKind::Skip,
+            "SASL server init unavailable for setpass"};
+  }
+
+  if (!MechanismAvailable(conn, "SRP")) {
+    sasl_dispose(&conn);
+    return {SaslSetupResultKind::Skip,
+            "SRP mechanism not available in SASL build"};
+  }
+
+  rc = sasl_setpass(conn, fixture.username.c_str(), fixture.password.c_str(),
+                    static_cast<unsigned>(fixture.password.size()), nullptr, 0,
+                    SASL_SET_CREATE | SASL_SET_NOPLAIN);
+  sasl_dispose(&conn);
+  if (rc == SASL_NOMECH || rc == SASL_NOUSERPASS) {
+    return {SaslSetupResultKind::Skip,
+            "SASL SRP setpass not supported in this build"};
+  }
+  if (rc != SASL_OK && rc != SASL_NOCHANGE) {
+    return {SaslSetupResultKind::Fail,
+            std::string("sasl_setpass failed: ") +
+                sasl_errstring(rc, nullptr, nullptr)};
+  }
+
   veritas::auth::v1::BeginAuthRequest warmup_request;
   veritas::auth::v1::BeginAuthResponse warmup_response;
   const std::string warmup_user =
@@ -266,9 +297,8 @@ SaslSetupResult EnsureUserExists(SaslFixture& fixture) {
       {SASL_CB_LIST_END, nullptr, nullptr},
   };
   sasl_conn_t* warmup_conn = nullptr;
-  int rc = sasl_client_new(fixture.options.sasl_service.c_str(), "localhost",
-                           nullptr, nullptr, warmup_callbacks, 0,
-                           &warmup_conn);
+  rc = sasl_client_new(fixture.options.sasl_service.c_str(), "localhost",
+                       nullptr, nullptr, warmup_callbacks, 0, &warmup_conn);
   if (rc != SASL_OK) {
     return {SaslSetupResultKind::Fail, "SASL client init failed"};
   }
@@ -291,8 +321,7 @@ SaslSetupResult EnsureUserExists(SaslFixture& fixture) {
     return {SaslSetupResultKind::Fail,
             "SASL client start returned empty initial response"};
   }
-  warmup_request.set_client_start(
-      std::string(warmup_out, warmup_out_len));
+  warmup_request.set_client_start(std::string(warmup_out, warmup_out_len));
   sasl_dispose(&warmup_conn);
   const grpc::Status warmup_status =
       fixture.server->BeginAuth(warmup_request, &warmup_response);
@@ -304,37 +333,7 @@ SaslSetupResult EnsureUserExists(SaslFixture& fixture) {
     return {SaslSetupResultKind::Fail, warmup_status.error_message()};
   }
 
-  sasl_conn_t* conn = nullptr;
-  const char* realm = fixture.options.sasl_realm.empty()
-                           ? nullptr
-                           : fixture.options.sasl_realm.c_str();
-  rc = sasl_server_new(fixture.options.sasl_service.c_str(), nullptr, realm,
-                       nullptr, nullptr, nullptr, 0, &conn);
-  if (rc != SASL_OK) {
-    return {SaslSetupResultKind::Skip,
-            "SASL server init unavailable for setpass"};
-  }
-
-  if (!MechanismAvailable(conn, "SRP")) {
-    sasl_dispose(&conn);
-    return {SaslSetupResultKind::Skip,
-            "SRP mechanism not available in SASL build"};
-  }
-
-  rc = sasl_setpass(conn, fixture.username.c_str(), fixture.password.c_str(),
-                    static_cast<unsigned>(fixture.password.size()), nullptr, 0,
-                    SASL_SET_CREATE | SASL_SET_NOPLAIN);
-  sasl_dispose(&conn);
-  if (rc == SASL_OK || rc == SASL_NOCHANGE) {
-    return {SaslSetupResultKind::Ok, ""};
-  }
-  if (rc == SASL_NOMECH || rc == SASL_NOUSERPASS) {
-    return {SaslSetupResultKind::Skip,
-            "SASL SRP setpass not supported in this build"};
-  }
-  return {SaslSetupResultKind::Fail,
-          std::string("sasl_setpass failed: ") +
-              sasl_errstring(rc, nullptr, nullptr)};
+  return {SaslSetupResultKind::Ok, ""};
 }
 
 int EnsureClientInit() {

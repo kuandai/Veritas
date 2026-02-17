@@ -266,33 +266,6 @@ SaslSetupResult EnsureUserExists(
     const std::string& username,
     const std::string& password) {
   veritas::gatekeeper::SaslServer server(options);
-  veritas::auth::v1::BeginAuthRequest warmup_request;
-  veritas::auth::v1::BeginAuthResponse warmup_response;
-  const std::string warmup_user =
-      QualifyUser("warmup_" + RandomSuffix(), options.sasl_realm);
-  warmup_request.set_login_username(warmup_user);
-  try {
-    SaslClient warmup_client(options.sasl_service, warmup_user, "warmup-pass");
-    const std::string warmup_start = warmup_client.Start();
-    if (warmup_start.empty()) {
-      return {SaslSetupKind::Skip,
-              "SASL client did not emit initial response"};
-    }
-    warmup_request.set_client_start(warmup_start);
-  } catch (const std::exception& ex) {
-    return {SaslSetupKind::Skip,
-            std::string("SASL client start failed: ") + ex.what()};
-  }
-  const grpc::Status warmup_status =
-      server.BeginAuth(warmup_request, &warmup_response);
-  if (!warmup_status.ok()) {
-    if (IsSrpUnavailable(warmup_status)) {
-      return {SaslSetupKind::Skip,
-              "SRP mechanism not available in SASL build"};
-    }
-    return {SaslSetupKind::Fail, warmup_status.error_message()};
-  }
-
   SaslCallbackContext cb_ctx;
   cb_ctx.dbname = options.sasl_dbname;
   cb_ctx.mech_list = options.sasl_mech_list;
@@ -341,16 +314,44 @@ SaslSetupResult EnsureUserExists(
                     static_cast<unsigned>(password.size()), nullptr, 0,
                     SASL_SET_CREATE | SASL_SET_NOPLAIN);
   sasl_dispose(&conn);
-  if (rc == SASL_OK || rc == SASL_NOCHANGE) {
-    return {SaslSetupKind::Ok, ""};
-  }
   if (rc == SASL_NOMECH || rc == SASL_NOUSERPASS) {
     return {SaslSetupKind::Skip,
             "SASL SRP setpass not supported in this build"};
   }
-  return {SaslSetupKind::Fail,
-          std::string("sasl_setpass failed: ") +
-              sasl_errstring(rc, nullptr, nullptr)};
+  if (rc != SASL_OK && rc != SASL_NOCHANGE) {
+    return {SaslSetupKind::Fail,
+            std::string("sasl_setpass failed: ") +
+                sasl_errstring(rc, nullptr, nullptr)};
+  }
+
+  veritas::auth::v1::BeginAuthRequest warmup_request;
+  veritas::auth::v1::BeginAuthResponse warmup_response;
+  const std::string warmup_user =
+      QualifyUser("warmup_" + RandomSuffix(), options.sasl_realm);
+  warmup_request.set_login_username(warmup_user);
+  try {
+    SaslClient warmup_client(options.sasl_service, warmup_user, "warmup-pass");
+    const std::string warmup_start = warmup_client.Start();
+    if (warmup_start.empty()) {
+      return {SaslSetupKind::Skip,
+              "SASL client did not emit initial response"};
+    }
+    warmup_request.set_client_start(warmup_start);
+  } catch (const std::exception& ex) {
+    return {SaslSetupKind::Skip,
+            std::string("SASL client start failed: ") + ex.what()};
+  }
+  const grpc::Status warmup_status =
+      server.BeginAuth(warmup_request, &warmup_response);
+  if (!warmup_status.ok()) {
+    if (IsSrpUnavailable(warmup_status)) {
+      return {SaslSetupKind::Skip,
+              "SRP mechanism not available in SASL build"};
+    }
+    return {SaslSetupKind::Fail, warmup_status.error_message()};
+  }
+
+  return {SaslSetupKind::Ok, ""};
 }
 
 SaslSetupResult EnsureClientSrpAvailable(const std::string& service,
