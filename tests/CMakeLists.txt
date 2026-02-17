@@ -2,6 +2,8 @@ find_package(GTest REQUIRED)
 find_package(OpenSSL REQUIRED)
 
 option(VERITAS_ENABLE_PROTO_TESTS "Enable protobuf/gRPC-dependent tests" OFF)
+option(VERITAS_ENABLE_REDIS_INTEGRATION_TESTS
+  "Enable Redis TLS integration tests requiring an external Redis endpoint" OFF)
 
 set(VERITAS_TEST_SOURCES
   main.cpp
@@ -169,4 +171,45 @@ if(VERITAS_ENABLE_PROTO_TESTS)
 
   add_dependencies(veritas_libveritas_tests veritas_protocol)
   add_test(NAME veritas_libveritas_tests COMMAND veritas_libveritas_tests)
+
+  if(VERITAS_ENABLE_REDIS_INTEGRATION_TESTS)
+    find_package(redis++ REQUIRED CONFIG)
+
+    set(REDIS_CPP_TARGET "")
+    if(TARGET redis++::redis++_static)
+      set(REDIS_CPP_TARGET redis++::redis++_static)
+    elseif(TARGET redis++::redis++)
+      set(REDIS_CPP_TARGET redis++::redis++)
+    endif()
+
+    if(NOT REDIS_CPP_TARGET)
+      message(FATAL_ERROR "redis++ C++ target not found in current toolchain")
+    endif()
+
+    add_executable(veritas_gatekeeper_redis_integration_tests
+      main.cpp
+      gatekeeper/redis_tls_integration_test.cpp
+      ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_store.cpp
+    )
+
+    target_include_directories(veritas_gatekeeper_redis_integration_tests
+      PRIVATE
+        ${CMAKE_SOURCE_DIR}/services/gatekeeper/src
+    )
+
+    target_link_libraries(veritas_gatekeeper_redis_integration_tests
+      PRIVATE
+        GTest::gtest
+        OpenSSL::Crypto
+        ${REDIS_CPP_TARGET}
+    )
+
+    target_compile_features(veritas_gatekeeper_redis_integration_tests
+      PRIVATE
+        cxx_std_20
+    )
+
+    add_test(NAME veritas_gatekeeper_redis_integration_tests
+             COMMAND veritas_gatekeeper_redis_integration_tests)
+  endif()
 endif()

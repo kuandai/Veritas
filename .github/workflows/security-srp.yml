@@ -1,0 +1,50 @@
+name: security-srp
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  strict-srp:
+    runs-on: ubuntu-24.04
+    env:
+      CONAN_HOME: ${{ github.workspace }}/.conan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Conan
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "conan>=2.0,<3.0"
+
+      - name: Bootstrap Conan recipes
+        run: ./scripts/bootstrap.sh
+
+      - name: Generate lockfile
+        run: ./scripts/lock.sh
+
+      - name: Build with proto tests enabled
+        env:
+          VERITAS_ENABLE_PROTO_TESTS: ON
+          BUILD_TYPE: Debug
+        run: ./scripts/build.sh
+
+      - name: Run strict SRP suite
+        env:
+          VERITAS_STRICT_SRP: ON
+        run: ./scripts/test.sh
+
+      - name: Upload SRP verification artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: srp-strict-artifacts
+          path: build/security-artifacts/srp-strict
+          if-no-files-found: error
