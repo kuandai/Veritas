@@ -80,3 +80,78 @@ For `rediss://`:
 - `verify_peer=true` (default) requires `cacert` or `cacertdir`.
 - Client-auth requires both `cert` and `key`.
 - Optional `sni` can override TLS SNI host.
+
+## 8. Strict SRP verification
+
+For security/release validation, run SRP tests in strict mode:
+
+```bash
+VERITAS_ENABLE_PROTO_TESTS=ON ./scripts/build.sh
+VERITAS_STRICT_SRP=ON ./scripts/test.sh
+```
+
+This mode fails if SRP tests skip, and writes verification artifacts to:
+
+- `build/security-artifacts/srp-strict/environment.txt`
+- `build/security-artifacts/srp-strict/pluginviewer-server.txt`
+- `build/security-artifacts/srp-strict/pluginviewer-client.txt`
+
+## 9. Redis TLS integration test path
+
+Use `scripts/test_redis_tls_integration.sh` to run the Redis TLS integration
+target. The script always validates fail-closed behavior for invalid `rediss://`
+configuration and can also validate real TLS connectivity.
+
+```bash
+VERITAS_REDIS_TLS_URI='rediss://user:pass@redis.example:6380/0?cacert=/path/ca.pem' \
+  ./scripts/test_redis_tls_integration.sh
+```
+
+If `VERITAS_REDIS_TLS_URI` is unset, the external-connectivity test is skipped.
+
+## 10. Gatekeeper + Demo Smoke Test
+
+Run an end-to-end local smoke test (provision user, start Gatekeeper with TLS,
+authenticate via `veritas_auth_demo`):
+
+```bash
+./scripts/smoke_auth_demo.sh
+```
+
+The script writes logs under `/tmp/veritas_smoke` by default.
+
+## 11. Sanitizer Notes
+
+No dedicated TSAN CI lane is wired yet. For local ASAN/UBSAN checks:
+
+```bash
+cmake -S . -B build \
+  -DCMAKE_TOOLCHAIN_FILE=build/conan_toolchain.cmake \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+  -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+For Gatekeeper auth/session sanitizer runs, use
+`ASAN_OPTIONS=detect_leaks=0` to ignore known Cyrus SRP leak reports in
+third-party code paths.
+
+## 12. Release Transport Gate Checks
+
+To validate release-mode transport policy gates:
+
+```bash
+conan install . -of build_release -s build_type=Release --build=missing
+cmake -S . -B build_release \
+  -DCMAKE_TOOLCHAIN_FILE=build_release/conan_toolchain.cmake \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DVERITAS_ENABLE_PROTO_TESTS=ON
+cmake --build build_release --parallel \
+  --target veritas_gatekeeper_tests veritas_libveritas_tests
+./build_release/tests/veritas_gatekeeper_tests \
+  --gtest_filter=ConfigTest.LoadConfigRejectsSaslDisabled
+./build_release/tests/veritas_libveritas_tests \
+  --gtest_filter=GatekeeperClientTest.InsecureTransportPolicyMatchesBuildType
+```

@@ -18,13 +18,17 @@ items.
 - gRPC/Protobuf code generation is wired through the `protocol` target.
 - Custom Cyrus SASL recipe applies an SRP `sasl_setpass` fix required for
   sasldb provisioning.
+- Strict SRP verification is wired in `scripts/test_srp_strict.sh` and the
+  `security-srp` GitHub Actions workflow (`.github/workflows/security-srp.yml`).
+- Redis TLS integration test entrypoint is `scripts/test_redis_tls_integration.sh`.
+- Local Gatekeeper/auth demo smoke test entrypoint is `scripts/smoke_auth_demo.sh`.
 **Aspirational:** replace `file(GLOB_RECURSE ...)` with explicit source lists
 as the codebase stabilizes.
 
 ## Deployment testing (latest)
 
-- Local Gatekeeper + demo client deployment was exercised on 2026-02-07.
-  SRP login succeeds when:
+- Local Gatekeeper + demo client deployment can be exercised with
+  `scripts/smoke_auth_demo.sh`. SRP login succeeds when:
   - `SASL_REALM` is set and the client uses a realm-qualified authid
     (the demo now appends `@<realm>` automatically).
   - `SASL_CONF_PATH` points at a directory containing
@@ -130,8 +134,10 @@ Placeholders / incomplete
 - SASL error mapping is limited to a minimal gRPC status translation.
 - Unit tests cover fake salt, token hashing, rate limiting, config validation,
   TLS credential validation, token store behavior, and session cache handling.
-- Integration tests cover SRP handshake happy path + invalid proof (skipped
-  if SRP is unavailable in the SASL build).
+- Integration tests cover SRP handshake happy path + invalid proof.
+- Redis TLS integration tests cover fail-closed behavior for invalid `rediss://`
+  configuration and optional external endpoint validation via
+  `VERITAS_REDIS_TLS_URI`.
 
 Aspirational
 - Streamlined SRP verifier provisioning and server-side rotation policy.
@@ -141,10 +147,13 @@ Aspirational
 ## Cross-cutting gaps (incomplete)
 
 - SASL verifier provisioning (still external sasldb/auxprop tooling).
-- SRP integration tests exist but are skipped when SRP is unavailable in the SASL build.
 - Token store persistence and revocation flows (beyond current Redis adapter).
 - Shared storage layer and cross-service integration.
-- Integration tests for security-critical flows.
+- TSAN lane is not wired in CI (strict SRP lane is wired).
+- External Redis TLS connectivity validation requires a provisioned test endpoint.
+- Release transport policy gates were validated in `build_release` via:
+  `ConfigTest.LoadConfigRejectsSaslDisabled` and
+  `GatekeeperClientTest.InsecureTransportPolicyMatchesBuildType`.
 
 ## Scope note
 

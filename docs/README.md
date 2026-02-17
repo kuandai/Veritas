@@ -13,5 +13,8 @@ to separate architecture, component docs, protocols, and status snapshots.
   - `components/shared.md`
   - `components/libveritas.md`
 - `protocol/README.md`: protobuf layout and status.
+- `security/changes.md`: deployment-impacting security behavior and operator
+  responsibilities.
+- `security/tracking.md`: security hardening item register and sprint status.
 - `status/current-state.md`: current implementation snapshot, with placeholders
   and aspirational features clearly marked.
