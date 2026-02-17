@@ -15,7 +15,12 @@ std::shared_ptr<grpc::ChannelCredentials> BuildCredentials(
     return grpc::SslCredentials(options);
   }
   if (config.allow_insecure) {
+#if defined(NDEBUG)
+    throw std::runtime_error(
+        "Insecure Gatekeeper transport is disabled in release builds");
+#else
     return grpc::InsecureChannelCredentials();
+#endif
   }
   throw std::runtime_error("Gatekeeper root certificate is required");
 }
