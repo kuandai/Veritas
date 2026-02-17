@@ -30,6 +30,13 @@ struct ClientCreds {
   std::unique_ptr<sasl_secret_t, SaslSecretDeleter> secret;
 };
 
+struct SaslCallbackContext {
+  std::string conf_path;
+  std::string plugin_path;
+  std::string dbname;
+  std::string mech_list;
+};
+
 int SaslGetSimple(void* context, int id, const char** result, unsigned* len) {
   if (!context || !result) {
     return SASL_BADPARAM;
@@ -62,6 +69,66 @@ int SaslGetSecret(sasl_conn_t* /*conn*/, void* context, int id,
     creds->secret.reset(raw);
   }
   *psecret = creds->secret.get();
+  return SASL_OK;
+}
+
+int SaslGetopt(void* context,
+               const char* /*plugin_name*/,
+               const char* option,
+               const char** result,
+               unsigned* len) {
+  if (!context || !option || !result) {
+    return SASL_BADPARAM;
+  }
+  const auto* ctx = static_cast<SaslCallbackContext*>(context);
+  const std::string_view option_view(option);
+  const std::string* value = nullptr;
+  if (option_view == "sasldb_path" && !ctx->dbname.empty()) {
+    value = &ctx->dbname;
+  } else if (option_view == "mech_list" && !ctx->mech_list.empty()) {
+    value = &ctx->mech_list;
+  }
+  if (!value) {
+    *result = nullptr;
+    if (len) {
+      *len = 0;
+    }
+    return SASL_OK;
+  }
+  *result = value->c_str();
+  if (len) {
+    *len = static_cast<unsigned>(value->size());
+  }
+  return SASL_OK;
+}
+
+int SaslGetpath(void* context, const char** path) {
+  if (!context || !path) {
+    return SASL_BADPARAM;
+  }
+  const auto* ctx = static_cast<SaslCallbackContext*>(context);
+  if (ctx->plugin_path.empty()) {
+    return SASL_FAIL;
+  }
+  *path = ctx->plugin_path.c_str();
+  return SASL_OK;
+}
+
+int SaslGetconfpath(void* context, char** path) {
+  if (!context || !path) {
+    return SASL_BADPARAM;
+  }
+  const auto* ctx = static_cast<SaslCallbackContext*>(context);
+  if (ctx->conf_path.empty()) {
+    return SASL_FAIL;
+  }
+  const std::size_t size = ctx->conf_path.size() + 1;
+  auto* buffer = static_cast<char*>(std::malloc(size));
+  if (!buffer) {
+    return SASL_NOMEM;
+  }
+  std::memcpy(buffer, ctx->conf_path.c_str(), size);
+  *path = buffer;
   return SASL_OK;
 }
 
@@ -249,12 +316,46 @@ SaslSetupResult EnsureUserExists(SaslFixture& fixture) {
     return {SaslSetupResultKind::Fail, "SASL client initialization failed"};
   }
 
+  SaslCallbackContext cb_ctx;
+  cb_ctx.dbname = fixture.options.sasl_dbname;
+  cb_ctx.mech_list = fixture.options.sasl_mech_list;
+  cb_ctx.plugin_path = fixture.options.sasl_plugin_path;
+  cb_ctx.conf_path = fixture.options.sasl_conf_path;
+
+  std::vector<sasl_callback_t> callbacks;
+  auto add_callback = [&callbacks](unsigned long id,
+                                   int (*proc)(void),
+                                   void* ctx) {
+    sasl_callback_t cb{};
+    cb.id = id;
+    cb.proc = reinterpret_cast<int (*)(void)>(proc);
+    cb.context = ctx;
+    callbacks.push_back(cb);
+  };
+
+  add_callback(SASL_CB_GETOPT,
+               reinterpret_cast<int (*)(void)>(&SaslGetopt),
+               &cb_ctx);
+  if (!cb_ctx.plugin_path.empty()) {
+    add_callback(SASL_CB_GETPATH,
+                 reinterpret_cast<int (*)(void)>(&SaslGetpath),
+                 &cb_ctx);
+  }
+  if (!cb_ctx.conf_path.empty()) {
+    add_callback(SASL_CB_GETCONFPATH,
+                 reinterpret_cast<int (*)(void)>(&SaslGetconfpath),
+                 &cb_ctx);
+  }
+  sasl_callback_t end_cb{};
+  end_cb.id = SASL_CB_LIST_END;
+  callbacks.push_back(end_cb);
+
   sasl_conn_t* conn = nullptr;
   const char* realm = fixture.options.sasl_realm.empty()
                            ? nullptr
                            : fixture.options.sasl_realm.c_str();
   int rc = sasl_server_new(fixture.options.sasl_service.c_str(), nullptr, realm,
-                           nullptr, nullptr, nullptr, 0, &conn);
+                           nullptr, nullptr, callbacks.data(), 0, &conn);
   if (rc != SASL_OK) {
     return {SaslSetupResultKind::Skip,
             "SASL server init unavailable for setpass"};

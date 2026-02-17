@@ -35,6 +35,7 @@ constexpr int kSaslOk = SASL_OK;
 #endif
 std::atomic<int> g_sasl_init_result{kSaslOk};
 std::string g_sasl_init_error;
+std::string g_sasl_app_name = "veritas_gatekeeper";
 
 #if !defined(VERITAS_DISABLE_SASL)
 struct SaslCallbackContext {
@@ -384,14 +385,11 @@ SaslServer::~SaslServer() = default;
 
 void SaslServer::EnsureInitialized() {
 #if !defined(VERITAS_DISABLE_SASL)
-  if (!sasl_context_) {
-    sasl_context_ = std::make_unique<SaslContext>(options_);
-  }
   std::call_once(g_sasl_init_once, [this]() {
-    const auto* callbacks =
-        sasl_context_ ? sasl_context_->callbacks.data() : nullptr;
-    const int result =
-        sasl_server_init(callbacks, options_.sasl_service.c_str());
+    if (!options_.sasl_service.empty()) {
+      g_sasl_app_name = options_.sasl_service;
+    }
+    const int result = sasl_server_init(nullptr, g_sasl_app_name.c_str());
     if (result != SASL_OK) {
       g_sasl_init_result.store(result);
       g_sasl_init_error = "SASL initialization failed";
