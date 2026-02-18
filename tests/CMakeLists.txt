@@ -125,6 +125,7 @@ if(VERITAS_ENABLE_PROTO_TESTS)
   set(VERITAS_LIBVERITAS_TEST_SOURCES
     main.cpp
     libveritas/secure_string_test.cpp
+    libveritas/entropy_test.cpp
     libveritas/gatekeeper_client_test.cpp
     libveritas/identity_manager_persistence_test.cpp
     libveritas/sasl_client_test.cpp

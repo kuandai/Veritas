@@ -31,6 +31,8 @@ TEST(IdentityManagerPersistenceTest, LoadsPersistedIdentityAtStartup) {
   store->Save(seeded);
 
   IdentityManager manager([] { return std::string("unused"); }, config);
+  EXPECT_EQ(manager.GetState(), IdentityState::Ready);
+  EXPECT_EQ(manager.GetLastError(), IdentityErrorCode::None);
   const std::optional<AuthResult> loaded = manager.GetPersistedIdentity();
   ASSERT_TRUE(loaded.has_value());
   EXPECT_EQ(loaded->user_uuid, seeded.user_uuid);
@@ -60,12 +62,67 @@ TEST(IdentityManagerPersistenceTest, ClearPersistedIdentityRemovesStoredValue) {
 
   IdentityManager manager([] { return std::string("unused"); }, config);
   ASSERT_TRUE(manager.GetPersistedIdentity().has_value());
+  EXPECT_EQ(manager.GetState(), IdentityState::Ready);
 
   manager.ClearPersistedIdentity();
   EXPECT_FALSE(manager.GetPersistedIdentity().has_value());
+  EXPECT_EQ(manager.GetState(), IdentityState::Unauthenticated);
+  EXPECT_EQ(manager.GetLastError(), IdentityErrorCode::None);
 
   auto verify_store = storage::CreateTokenStore(config);
   EXPECT_FALSE(verify_store->Load().has_value());
+}
+
+TEST(IdentityManagerStateTest, StartsUnauthenticatedWithoutStoreConfig) {
+  IdentityManager manager([] { return std::string("unused"); });
+  EXPECT_EQ(manager.GetState(), IdentityState::Unauthenticated);
+  EXPECT_EQ(manager.GetLastError(), IdentityErrorCode::None);
+  EXPECT_FALSE(manager.GetPersistedIdentity().has_value());
+}
+
+TEST(IdentityManagerStateTest, LockPreventsAuthenticationAttempt) {
+  IdentityManager manager([] { return std::string("unused"); });
+  manager.Lock();
+  EXPECT_EQ(manager.GetState(), IdentityState::Locked);
+
+  GatekeeperClientConfig config;
+  config.target = "127.0.0.1:50051";
+  config.allow_insecure = true;
+
+  try {
+    static_cast<void>(manager.Authenticate(config, "user", "password"));
+    FAIL() << "Authenticate should fail while locked";
+  } catch (const IdentityManagerError& ex) {
+    EXPECT_EQ(ex.code(), IdentityErrorCode::InvalidStateTransition);
+  }
+  EXPECT_EQ(manager.GetLastError(), IdentityErrorCode::InvalidStateTransition);
+}
+
+TEST(IdentityManagerStateTest, LockedStateRejectsClearTransition) {
+  IdentityManager manager([] { return std::string("unused"); });
+  manager.Lock();
+  EXPECT_EQ(manager.GetState(), IdentityState::Locked);
+
+  try {
+    manager.ClearPersistedIdentity();
+    FAIL() << "ClearPersistedIdentity should fail while locked";
+  } catch (const IdentityManagerError& ex) {
+    EXPECT_EQ(ex.code(), IdentityErrorCode::InvalidStateTransition);
+  }
+  EXPECT_EQ(manager.GetState(), IdentityState::Locked);
+  EXPECT_EQ(manager.GetLastError(), IdentityErrorCode::InvalidStateTransition);
+}
+
+TEST(IdentityManagerStateTest, MissingCredentialProviderHasMachineReadableError) {
+  IdentityManager manager(CredentialProvider{});
+  GatekeeperClientConfig config;
+  try {
+    static_cast<void>(manager.Authenticate(config, "user"));
+    FAIL() << "Authenticate should fail when credential provider is missing";
+  } catch (const IdentityManagerError& ex) {
+    EXPECT_EQ(ex.code(), IdentityErrorCode::MissingCredentialProvider);
+  }
+  EXPECT_EQ(manager.GetLastError(), IdentityErrorCode::MissingCredentialProvider);
 }
 
 }  // namespace

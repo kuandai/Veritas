@@ -42,8 +42,15 @@ as the codebase stabilizes.
 
 Implemented
 - `IdentityManager` type with basic callbacks and an SRP auth API.
+- Explicit identity state model (`Unauthenticated`, `Ready`, `Locked`) with
+  machine-readable error codes.
+- `LOCKED` state is terminal for lifecycle transitions in-process.
 - `AuthFlow`, `GatekeeperClient`, and `SaslClient` for SRP-6a login via Gatekeeper.
 - Password buffers are scrubbed with `sodium_memzero` in the SASL client.
+- `IdentityManager` performs a non-blocking entropy preflight via `getrandom()`
+  before auth and fails fast on retryable/hard entropy errors.
+- `SecureBuffer` now uses `sodium_malloc`, attempts `sodium_mlock`, and
+  guarantees zeroization on release.
 - `GatekeeperClientConfig.allow_insecure` is accepted in non-release builds;
   release builds reject insecure transport.
 - Storage layer includes a `TokenStore` abstraction with:

@@ -10,6 +10,12 @@ token rotation callbacks, and a security context for transport layers (TLS/QUIC)
 - `IdentityManager` exists with callback registration and a minimal auth API:
   - `Authenticate(config, username, password)`
   - `Authenticate(config, username)` (password pulled from `CredentialProvider`)
+  - Explicit identity lifecycle states:
+    - `Unauthenticated`
+    - `Ready`
+    - `Locked` (terminal until process restart)
+  - Machine-readable error codes for auth/lifecycle failures.
+  - Thread-safe state/error accessors via shared mutex.
 - Client-side SRP-6a handshake is implemented under `libveritas/src/auth/`:
   - `SaslClient` wraps Cyrus SASL SRP and scrubs password buffers.
   - `GatekeeperClient` wraps gRPC BeginAuth/FinishAuth calls.
@@ -24,14 +30,22 @@ token rotation callbacks, and a security context for transport layers (TLS/QUIC)
   - Loads persisted identity at startup when a token store is configured.
   - Persists successful auth result (`user_uuid`, refresh token, expiry).
   - Supports explicit persisted-identity clearing (`ClearPersistedIdentity()`).
+- Entropy hardening:
+  - Authentication now performs a non-blocking `getrandom()` preflight.
+  - Retryable entropy starvation and hard entropy failures map to
+    `IdentityErrorCode::EntropyUnavailable`.
+- Secure in-memory handling:
+  - `SecureBuffer` uses `sodium_malloc`.
+  - Attempts `sodium_mlock` when available.
+  - Guarantees zeroization before release across success and failure paths.
 - `get_quic_context()` returns a default/empty `SecurityContext`.
 
 ## Placeholders / incomplete
 
-- No transport integration.
-- No certificate rotation logic.
+- No transport integration beyond placeholder context accessor.
+- No certificate rotation worker.
 - Callbacks are stored but not invoked.
-- `SecurityContext` holds only a raw `SSL_CTX*`.
+- `SecurityContext` remains a thin wrapper over `SSL_CTX*`.
 - Auth API is synchronous only; no retry or backoff logic yet.
 
 ## Aspirational
