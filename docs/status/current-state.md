@@ -51,6 +51,17 @@ Implemented
   before auth and fails fast on retryable/hard entropy errors.
 - `SecureBuffer` now uses `sodium_malloc`, attempts `sodium_mlock`, and
   guarantees zeroization on release.
+- Rotation worker (`std::jthread`) is implemented in `IdentityManager`:
+  - configurable 70/30 scheduling,
+  - bounded exponential backoff with jitter,
+  - auth-server-unreachable + persistent-rotation-failure alerts,
+  - LKG retention during transient failures.
+- Transport/security context management now supports:
+  - thread-safe `SSL_CTX` swap with shared ownership,
+  - TLS 1.3 enforcement in context construction,
+  - caller ALPN validation,
+  - leaf + intermediate chain ingestion checks.
+- Analytics callback hooks are available for auth/rotation outcomes.
 - `GatekeeperClientConfig.allow_insecure` is accepted in non-release builds;
   release builds reject insecure transport.
 - Storage layer includes a `TokenStore` abstraction with:
@@ -62,11 +73,8 @@ Implemented
   - explicit clear via `ClearPersistedIdentity()`.
 
 Placeholders / incomplete
-- `SecurityContext` is empty beyond an `SSL_CTX*`.
-- `get_quic_context()` returns a default/empty context.
-- Callbacks are stored but not invoked.
-- No certificate rotation or transport integration.
-- No refresh scheduling/rotation lifecycle yet.
+- Revocation polling and lock propagation are not yet implemented.
+- No Notary-backed credential provider path yet.
 
 Aspirational
 - Production-grade credential management, rotation, and TLS/QUIC integration.

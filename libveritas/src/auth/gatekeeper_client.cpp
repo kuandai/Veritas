@@ -75,6 +75,7 @@ FinishAuthResult GatekeeperClient::FinishAuth(const std::string& session_id,
   result.server_proof = response.server_proof();
   result.result.user_uuid = response.user_uuid();
   result.result.refresh_token = response.refresh_token();
+  result.result.issued_at = std::chrono::system_clock::now();
 
   const auto seconds = response.expires_at().seconds();
   result.result.expires_at =

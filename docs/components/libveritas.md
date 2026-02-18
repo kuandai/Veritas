@@ -16,6 +16,7 @@ token rotation callbacks, and a security context for transport layers (TLS/QUIC)
     - `Locked` (terminal until process restart)
   - Machine-readable error codes for auth/lifecycle failures.
   - Thread-safe state/error accessors via shared mutex.
+  - Analytics/security callback hooks for auth and rotation outcomes.
 - Client-side SRP-6a handshake is implemented under `libveritas/src/auth/`:
   - `SaslClient` wraps Cyrus SASL SRP and scrubs password buffers.
   - `GatekeeperClient` wraps gRPC BeginAuth/FinishAuth calls.
@@ -38,15 +39,25 @@ token rotation callbacks, and a security context for transport layers (TLS/QUIC)
   - `SecureBuffer` uses `sodium_malloc`.
   - Attempts `sodium_mlock` when available.
   - Guarantees zeroization before release across success and failure paths.
-- `get_quic_context()` returns a default/empty `SecurityContext`.
+- Rotation lifecycle:
+  - `StartRotation`/`StopRotation` based on a `std::jthread` worker.
+  - Configurable 70/30 refresh schedule (`RotationPolicy.refresh_ratio`).
+  - Exponential backoff with jitter and bounded retry budget.
+  - LKG behavior during transient failures and lock transition after
+    grace-window exhaustion.
+  - Auth-server-unreachable and persistent-rotation-failure alerts.
+- Transport context hardening:
+  - Thread-safe `SSL_CTX` swap with reader-safe shared ownership.
+  - TLS 1.3-only context construction.
+  - Caller-provided ALPN is required and validated.
+  - Certificate input requires leaf + intermediate chain ingestion.
+- `get_quic_context()` returns the current shared `SecurityContext`.
 
 ## Placeholders / incomplete
 
-- No transport integration beyond placeholder context accessor.
-- No certificate rotation worker.
-- Callbacks are stored but not invoked.
-- `SecurityContext` remains a thin wrapper over `SSL_CTX*`.
-- Auth API is synchronous only; no retry or backoff logic yet.
+- Rotation worker depends on configured credential provider and auth target.
+- Revocation polling/lock propagation is not yet wired.
+- Credential-provider abstraction is local-only (no Notary integration yet).
 
 ## Aspirational
 

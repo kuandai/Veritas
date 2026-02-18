@@ -128,6 +128,7 @@ if(VERITAS_ENABLE_PROTO_TESTS)
     libveritas/entropy_test.cpp
     libveritas/gatekeeper_client_test.cpp
     libveritas/identity_manager_persistence_test.cpp
+    libveritas/rotation_manager_test.cpp
     libveritas/sasl_client_test.cpp
     libveritas/auth_flow_integration_test.cpp
     libveritas/token_store_test.cpp
