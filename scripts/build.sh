@@ -19,6 +19,7 @@ conan install "${ROOT_DIR}" -of "${ROOT_DIR}/build" -s build_type="${BUILD_TYPE}
 echo "Configuring CMake (VERITAS_ENABLE_PROTO_TESTS=${VERITAS_ENABLE_PROTO_TESTS})"
 cmake -S "${ROOT_DIR}" -B "${ROOT_DIR}/build" \
   -DCMAKE_TOOLCHAIN_FILE="${ROOT_DIR}/build/conan_toolchain.cmake" \
+  -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
   -DVERITAS_ENABLE_PROTO_TESTS="${VERITAS_ENABLE_PROTO_TESTS}"
 
 echo "Building"
