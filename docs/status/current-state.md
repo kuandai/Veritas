@@ -46,13 +46,17 @@ Implemented
 - Password buffers are scrubbed with `sodium_memzero` in the SASL client.
 - `GatekeeperClientConfig.allow_insecure` is accepted in non-release builds;
   release builds reject insecure transport.
+- Storage layer includes a `TokenStore` abstraction with:
+  - `Libsecret` backend for keyring-backed identity persistence.
+  - File fallback backend that requires explicit insecure opt-in.
 
 Placeholders / incomplete
 - `SecurityContext` is empty beyond an `SSL_CTX*`.
 - `get_quic_context()` returns a default/empty context.
 - Callbacks are stored but not invoked.
 - No certificate rotation or transport integration.
-- No client-side token persistence or refresh scheduling.
+- Token storage is not yet wired into `IdentityManager` authentication lifecycle.
+- No refresh scheduling/rotation lifecycle yet.
 
 Aspirational
 - Production-grade credential management, rotation, and TLS/QUIC integration.

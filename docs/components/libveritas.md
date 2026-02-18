@@ -16,6 +16,10 @@ token rotation callbacks, and a security context for transport layers (TLS/QUIC)
   - `AuthFlow` orchestrates SRP proofs across gRPC + SASL.
   - `GatekeeperClientConfig.allow_insecure` is accepted in non-release builds;
     release builds reject insecure transport.
+- Client storage layer now includes a `TokenStore` abstraction with:
+  - `Libsecret` backend for secure keyring-backed persistence.
+  - File fallback backend gated by explicit opt-in
+    (`allow_insecure_fallback=true`).
 - `get_quic_context()` returns a default/empty `SecurityContext`.
 
 ## Placeholders / incomplete
@@ -24,7 +28,8 @@ token rotation callbacks, and a security context for transport layers (TLS/QUIC)
 - No certificate rotation logic.
 - Callbacks are stored but not invoked.
 - `SecurityContext` holds only a raw `SSL_CTX*`.
-- No token storage or refresh-token persistence on the client.
+- Token storage backends exist but are not yet integrated into
+  `IdentityManager` auth lifecycle.
 - Auth API is synchronous only; no retry or backoff logic yet.
 
 ## Aspirational

@@ -128,6 +128,7 @@ if(VERITAS_ENABLE_PROTO_TESTS)
     libveritas/gatekeeper_client_test.cpp
     libveritas/sasl_client_test.cpp
     libveritas/auth_flow_integration_test.cpp
+    libveritas/token_store_test.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/auth_metrics.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/fake_salt.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/gatekeeper_service.cpp
