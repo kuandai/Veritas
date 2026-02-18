@@ -43,8 +43,9 @@ jobs:
         run: ./scripts/test.sh
 
       - name: Upload SRP verification artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: srp-strict-artifacts
           path: build/security-artifacts/srp-strict
-          if-no-files-found: error
+          if-no-files-found: warn

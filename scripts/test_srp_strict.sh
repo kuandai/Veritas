@@ -9,12 +9,50 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 mkdir -p "${ARTIFACT_DIR}"
 
+extract_cyrus_root_from_cmakedeps() {
+  local build_dir="$1"
+  local data_file
+  for data_file in "${build_dir}"/cyrus-sasl-*-data.cmake; do
+    [[ -f "${data_file}" ]] || continue
+    # Example:
+    #   set(cyrus-sasl_PACKAGE_FOLDER_DEBUG "/path/to/.conan/p/b/<id>/p")
+    local root
+    root=$(
+      sed -nE \
+        's/^set\\(cyrus-sasl_PACKAGE_FOLDER_[A-Z]+ \"([^\"]+)\"\\).*/\\1/p' \
+        "${data_file}" | head -n 1
+    )
+    if [[ -n "${root}" ]]; then
+      echo "${root}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+looks_like_srp_capable_package() {
+  local root="$1"
+  [[ -x "${root}/bin/pluginviewer" ]] || return 1
+  compgen -G "${root}/lib/sasl2/libsrp*" >/dev/null || return 1
+  # SRP setpass in our tests relies on a sasldb-backed auxprop plugin.
+  compgen -G "${root}/lib/sasl2/libsasldb*" >/dev/null || return 1
+  return 0
+}
+
 find_cyrus_root() {
+  # Prefer the exact package folder Conan wired into CMakeDeps for this build.
+  local from_build
+  from_build=$(extract_cyrus_root_from_cmakedeps "${BUILD_DIR}" || true)
+  if [[ -n "${from_build}" ]] && looks_like_srp_capable_package "${from_build}"; then
+    echo "${from_build}"
+    return 0
+  fi
+
   local pluginviewer
   while IFS= read -r pluginviewer; do
     local root
     root=$(dirname "$(dirname "${pluginviewer}")")
-    if compgen -G "${root}/lib/sasl2/libsrp*" >/dev/null; then
+    if looks_like_srp_capable_package "${root}"; then
       echo "${root}"
       return 0
     fi
