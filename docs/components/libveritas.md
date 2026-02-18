@@ -20,6 +20,10 @@ token rotation callbacks, and a security context for transport layers (TLS/QUIC)
   - `Libsecret` backend for secure keyring-backed persistence.
   - File fallback backend gated by explicit opt-in
     (`allow_insecure_fallback=true`).
+- `IdentityManager` persistence integration:
+  - Loads persisted identity at startup when a token store is configured.
+  - Persists successful auth result (`user_uuid`, refresh token, expiry).
+  - Supports explicit persisted-identity clearing (`ClearPersistedIdentity()`).
 - `get_quic_context()` returns a default/empty `SecurityContext`.
 
 ## Placeholders / incomplete
@@ -28,8 +32,6 @@ token rotation callbacks, and a security context for transport layers (TLS/QUIC)
 - No certificate rotation logic.
 - Callbacks are stored but not invoked.
 - `SecurityContext` holds only a raw `SSL_CTX*`.
-- Token storage backends exist but are not yet integrated into
-  `IdentityManager` auth lifecycle.
 - Auth API is synchronous only; no retry or backoff logic yet.
 
 ## Aspirational

@@ -382,6 +382,43 @@ TEST(AuthFlowIntegrationTest, SrpHappyPath) {
   EXPECT_FALSE(result.refresh_token.empty());
 }
 
+TEST(IdentityManagerIntegrationTest, AuthenticatePersistsIdentity) {
+  GatekeeperHarness harness;
+  const auto setup = StartGatekeeper(&harness);
+  if (setup.kind == SaslSetupResult::Kind::Skip) {
+    GTEST_SKIP() << setup.message;
+  }
+  ASSERT_EQ(setup.kind, SaslSetupResult::Kind::Ok) << setup.message;
+
+  GatekeeperClientConfig config;
+  config.target = harness.target;
+  config.allow_insecure = true;
+
+  ::veritas::storage::TokenStoreConfig store_config;
+  store_config.backend = ::veritas::storage::TokenStoreBackend::File;
+  store_config.allow_insecure_fallback = true;
+  store_config.file_path = TempPath("veritas_identity_store");
+
+  ::veritas::IdentityManager manager([] { return std::string("unused"); },
+                                     store_config);
+  const auto result =
+      manager.Authenticate(config, harness.username, harness.password);
+  const auto persisted = manager.GetPersistedIdentity();
+  ASSERT_TRUE(persisted.has_value());
+  EXPECT_EQ(persisted->user_uuid, result.user_uuid);
+  EXPECT_EQ(persisted->refresh_token, result.refresh_token);
+
+  ::veritas::IdentityManager restored([] { return std::string("unused"); },
+                                      store_config);
+  const auto reloaded = restored.GetPersistedIdentity();
+  ASSERT_TRUE(reloaded.has_value());
+  EXPECT_EQ(reloaded->user_uuid, result.user_uuid);
+  EXPECT_EQ(reloaded->refresh_token, result.refresh_token);
+
+  restored.ClearPersistedIdentity();
+  EXPECT_FALSE(restored.GetPersistedIdentity().has_value());
+}
+
 TEST(GatekeeperClientIntegrationTest, InvalidProofIsUnauthenticated) {
   GatekeeperHarness harness;
   const auto setup = StartGatekeeper(&harness);

@@ -2,9 +2,13 @@
 
 #include <chrono>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <string>
 
 typedef struct ssl_ctx_st SSL_CTX;
+
+#include "veritas/storage/token_store.h"
 
 namespace veritas {
 
@@ -45,7 +49,10 @@ using SecurityAlertCallback = std::function<void(AlertType)>;
 
 class IdentityManager {
  public:
-  explicit IdentityManager(CredentialProvider credential_provider);
+  explicit IdentityManager(
+      CredentialProvider credential_provider,
+      std::optional<storage::TokenStoreConfig> token_store_config =
+          std::nullopt);
 
   SecurityContext get_quic_context();
 
@@ -54,6 +61,8 @@ class IdentityManager {
                           const std::string& password);
   AuthResult Authenticate(const GatekeeperClientConfig& config,
                           const std::string& username);
+  std::optional<AuthResult> GetPersistedIdentity() const;
+  void ClearPersistedIdentity();
 
   void on_rotation(RotationCallback callback);
   void on_security_alert(SecurityAlertCallback callback);
@@ -64,6 +73,8 @@ class IdentityManager {
   RotationCallback rotation_callback_;
   SecurityAlertCallback security_alert_callback_;
   LogHandler log_handler_;
+  std::unique_ptr<storage::TokenStore> token_store_;
+  std::optional<AuthResult> persisted_identity_;
 };
 
 using Manager = IdentityManager;

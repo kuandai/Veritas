@@ -49,13 +49,16 @@ Implemented
 - Storage layer includes a `TokenStore` abstraction with:
   - `Libsecret` backend for keyring-backed identity persistence.
   - File fallback backend that requires explicit insecure opt-in.
+- `IdentityManager` now integrates persistence when configured with a token store:
+  - startup load of persisted identity,
+  - save on successful authentication,
+  - explicit clear via `ClearPersistedIdentity()`.
 
 Placeholders / incomplete
 - `SecurityContext` is empty beyond an `SSL_CTX*`.
 - `get_quic_context()` returns a default/empty context.
 - Callbacks are stored but not invoked.
 - No certificate rotation or transport integration.
-- Token storage is not yet wired into `IdentityManager` authentication lifecycle.
 - No refresh scheduling/rotation lifecycle yet.
 
 Aspirational
