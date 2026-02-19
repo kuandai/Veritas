@@ -33,7 +33,35 @@ message FinishAuthResponse {
   google.protobuf.Timestamp expires_at = 4;
 }
 
+message RevokeTokenRequest {
+  bytes refresh_token = 1;
+  string reason = 2;
+}
+
+message RevokeTokenResponse {
+  bool revoked = 1;
+}
+
+enum TokenStatusState {
+  TOKEN_STATUS_STATE_UNSPECIFIED = 0;
+  TOKEN_STATUS_STATE_ACTIVE = 1;
+  TOKEN_STATUS_STATE_REVOKED = 2;
+  TOKEN_STATUS_STATE_UNKNOWN = 3;
+}
+
+message GetTokenStatusRequest {
+  bytes refresh_token = 1;
+}
+
+message GetTokenStatusResponse {
+  TokenStatusState state = 1;
+  string reason = 2;
+  google.protobuf.Timestamp revoked_at = 3;
+}
+
 service Gatekeeper {
   rpc BeginAuth(BeginAuthRequest) returns (BeginAuthResponse);
   rpc FinishAuth(FinishAuthRequest) returns (FinishAuthResponse);
+  rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
+  rpc GetTokenStatus(GetTokenStatusRequest) returns (GetTokenStatusResponse);
 }

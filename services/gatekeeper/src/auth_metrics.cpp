@@ -19,6 +19,14 @@ void AuthMetrics::Record(std::string_view ip,
   }
 }
 
+void AuthMetrics::RecordSecurityEvent(std::string_view event_name) {
+  if (event_name.empty()) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(mutex_);
+  ++security_event_counters_[std::string(event_name)];
+}
+
 std::size_t AuthMetrics::IpKeyCount() const {
   std::lock_guard<std::mutex> lock(mutex_);
   return ip_counters_.size();
@@ -27,6 +35,15 @@ std::size_t AuthMetrics::IpKeyCount() const {
 std::size_t AuthMetrics::UuidKeyCount() const {
   std::lock_guard<std::mutex> lock(mutex_);
   return uuid_counters_.size();
+}
+
+uint64_t AuthMetrics::SecurityEventCount(std::string_view event_name) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  const auto it = security_event_counters_.find(std::string(event_name));
+  if (it == security_event_counters_.end()) {
+    return 0;
+  }
+  return it->second;
 }
 
 std::optional<AuthCounter> AuthMetrics::GetIpCounter(std::string_view ip) const {

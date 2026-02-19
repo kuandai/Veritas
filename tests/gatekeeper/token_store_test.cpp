@@ -36,6 +36,51 @@ TEST(TokenStoreTest, InMemoryStoreRevokeUserMarksTokens) {
   const auto loaded = store.GetToken("hash");
   ASSERT_TRUE(loaded.has_value());
   EXPECT_TRUE(loaded->is_revoked);
+  EXPECT_EQ(loaded->revoke_reason, "user-revoked");
+}
+
+TEST(TokenStoreTest, InMemoryStoreRevokeTokenCreatesTombstoneStatus) {
+  InMemoryTokenStore store;
+  TokenRecord record;
+  record.token_hash = "hash";
+  record.user_uuid = "user";
+  record.expires_at = std::chrono::system_clock::now() +
+                      std::chrono::hours(1);
+  store.PutToken(record);
+
+  store.RevokeToken("hash", "manual-revocation");
+  const auto status = store.GetTokenStatus("hash");
+  EXPECT_EQ(status.state, TokenState::Revoked);
+  EXPECT_EQ(status.reason, "manual-revocation");
+}
+
+TEST(TokenStoreTest, InMemoryStoreRejectsReplayWhenTombstoned) {
+  InMemoryTokenStore store;
+  TokenRecord record;
+  record.token_hash = "hash";
+  record.user_uuid = "user";
+  record.expires_at = std::chrono::system_clock::now() +
+                      std::chrono::hours(1);
+  store.PutToken(record);
+  store.RevokeToken("hash", "manual");
+
+  EXPECT_THROW(store.PutToken(record), TokenStoreError);
+}
+
+TEST(TokenStoreTest, InMemoryStoreExpiresTombstones) {
+  InMemoryTokenStore store(std::chrono::seconds(0));
+  TokenRecord record;
+  record.token_hash = "hash";
+  record.user_uuid = "user";
+  record.expires_at = std::chrono::system_clock::now() +
+                      std::chrono::hours(1);
+  store.PutToken(record);
+  store.RevokeToken("hash", "manual");
+
+  // Trigger cleanup path.
+  TokenRecord other = record;
+  other.token_hash = "other";
+  EXPECT_NO_THROW(store.PutToken(other));
 }
 
 TEST(TokenStoreTest, RedisStoreDisabledThrows) {

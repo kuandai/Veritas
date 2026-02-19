@@ -91,10 +91,14 @@ grpc::Status GatekeeperServiceImpl::BeginAuth(grpc::ServerContext* context,
   if (!rate_limiter_.Allow(peer_ip)) {
     status = grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
                           "Rate limit exceeded");
+    metrics_.RecordSecurityEvent("rate_limit_exceeded");
   } else {
     status = sasl_server_.BeginAuth(*request, response);
   }
   metrics_.Record(peer_ip, "", status.ok());
+  if (!status.ok()) {
+    metrics_.RecordSecurityEvent("auth_failure");
+  }
   LogAuthEvent(peer_ip, "BeginAuth", status, "");
   return status;
 }
@@ -107,12 +111,55 @@ grpc::Status GatekeeperServiceImpl::FinishAuth(grpc::ServerContext* context,
   if (!rate_limiter_.Allow(peer_ip)) {
     status = grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
                           "Rate limit exceeded");
+    metrics_.RecordSecurityEvent("rate_limit_exceeded");
   } else {
     status = sasl_server_.FinishAuth(*request, response);
   }
   const std::string user_uuid = status.ok() ? response->user_uuid() : "";
   metrics_.Record(peer_ip, user_uuid, status.ok());
+  if (!status.ok()) {
+    metrics_.RecordSecurityEvent("auth_failure");
+  }
   LogAuthEvent(peer_ip, "FinishAuth", status, user_uuid);
+  return status;
+}
+
+grpc::Status GatekeeperServiceImpl::RevokeToken(
+    grpc::ServerContext* context,
+    const RevokeTokenRequest* request,
+    RevokeTokenResponse* response) {
+  const std::string peer_ip = ExtractPeerIp(context);
+  grpc::Status status;
+  if (!rate_limiter_.Allow(peer_ip)) {
+    status = grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                          "Rate limit exceeded");
+    metrics_.RecordSecurityEvent("rate_limit_exceeded");
+  } else {
+    status = sasl_server_.RevokeToken(*request, response);
+  }
+  metrics_.Record(peer_ip, "", status.ok());
+  if (status.ok()) {
+    metrics_.RecordSecurityEvent("token_revoked");
+  }
+  LogAuthEvent(peer_ip, "RevokeToken", status, "");
+  return status;
+}
+
+grpc::Status GatekeeperServiceImpl::GetTokenStatus(
+    grpc::ServerContext* context,
+    const GetTokenStatusRequest* request,
+    GetTokenStatusResponse* response) {
+  const std::string peer_ip = ExtractPeerIp(context);
+  grpc::Status status;
+  if (!rate_limiter_.Allow(peer_ip)) {
+    status = grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                          "Rate limit exceeded");
+    metrics_.RecordSecurityEvent("rate_limit_exceeded");
+  } else {
+    status = sasl_server_.GetTokenStatus(*request, response);
+  }
+  metrics_.Record(peer_ip, "", status.ok());
+  LogAuthEvent(peer_ip, "GetTokenStatus", status, "");
   return status;
 }
 

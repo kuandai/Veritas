@@ -39,4 +39,15 @@ TEST(AuthMetricsTest, BoundsKeyCardinalityWithEviction) {
   EXPECT_TRUE(metrics.GetUuidCounter("user-3").has_value());
 }
 
+TEST(AuthMetricsTest, TracksSecurityEventCounters) {
+  AuthMetrics metrics;
+  metrics.RecordSecurityEvent("token_revoked");
+  metrics.RecordSecurityEvent("token_revoked");
+  metrics.RecordSecurityEvent("auth_failure");
+
+  EXPECT_EQ(metrics.SecurityEventCount("token_revoked"), 2u);
+  EXPECT_EQ(metrics.SecurityEventCount("auth_failure"), 1u);
+  EXPECT_EQ(metrics.SecurityEventCount("missing"), 0u);
+}
+
 }  // namespace veritas::gatekeeper

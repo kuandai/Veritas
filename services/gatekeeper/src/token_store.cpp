@@ -297,19 +297,41 @@ std::string UserTokensKey(const std::string& user_uuid) {
   return "user_tokens:" + user_uuid;
 }
 
+std::string TombstoneKey(const std::string& token_hash) {
+  return "token_tombstone:" + token_hash;
+}
+
 }  // namespace
 
 TokenStoreError::TokenStoreError(Kind kind, const std::string& message)
     : std::runtime_error(message), kind_(kind) {}
 
+void InMemoryTokenStore::CleanupExpiredLocked() {
+  const auto now = std::chrono::system_clock::now();
+  for (auto it = tombstones_.begin(); it != tombstones_.end();) {
+    if (it->second.expires_at <= now) {
+      it = tombstones_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
 void InMemoryTokenStore::PutToken(const TokenRecord& record) {
   std::lock_guard<std::mutex> lock(mutex_);
+  CleanupExpiredLocked();
+  const auto tombstone_it = tombstones_.find(record.token_hash);
+  if (tombstone_it != tombstones_.end()) {
+    throw TokenStoreError(TokenStoreError::Kind::ReplayRejected,
+                          "token hash is tombstoned");
+  }
   tokens_[record.token_hash] = record;
 }
 
 std::optional<TokenRecord> InMemoryTokenStore::GetToken(
     const std::string& token_hash) {
   std::lock_guard<std::mutex> lock(mutex_);
+  CleanupExpiredLocked();
   auto it = tokens_.find(token_hash);
   if (it == tokens_.end()) {
     return std::nullopt;
@@ -317,11 +339,70 @@ std::optional<TokenRecord> InMemoryTokenStore::GetToken(
   return it->second;
 }
 
+TokenStatus InMemoryTokenStore::GetTokenStatus(const std::string& token_hash) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  CleanupExpiredLocked();
+
+  const auto token_it = tokens_.find(token_hash);
+  if (token_it != tokens_.end()) {
+    TokenStatus status;
+    status.user_uuid = token_it->second.user_uuid;
+    if (token_it->second.is_revoked) {
+      status.state = TokenState::Revoked;
+      status.reason = token_it->second.revoke_reason;
+      status.revoked_at = token_it->second.revoked_at;
+    } else {
+      status.state = TokenState::Active;
+    }
+    return status;
+  }
+
+  const auto tombstone_it = tombstones_.find(token_hash);
+  if (tombstone_it != tombstones_.end()) {
+    TokenStatus status;
+    status.state = TokenState::Revoked;
+    status.user_uuid = tombstone_it->second.user_uuid;
+    status.reason = tombstone_it->second.reason;
+    status.revoked_at = tombstone_it->second.revoked_at;
+    return status;
+  }
+
+  return TokenStatus{};
+}
+
+void InMemoryTokenStore::RevokeToken(const std::string& token_hash,
+                                     const std::string& reason) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  CleanupExpiredLocked();
+  const auto now = std::chrono::system_clock::now();
+  const std::string effective_reason =
+      reason.empty() ? "revoked" : reason;
+
+  auto token_it = tokens_.find(token_hash);
+  TombstoneRecord tombstone;
+  tombstone.reason = effective_reason;
+  tombstone.revoked_at = now;
+  tombstone.expires_at = now + tombstone_ttl_;
+  if (token_it != tokens_.end()) {
+    token_it->second.is_revoked = true;
+    token_it->second.revoke_reason = effective_reason;
+    token_it->second.revoked_at = now;
+    tombstone.user_uuid = token_it->second.user_uuid;
+  }
+  tombstones_[token_hash] = tombstone;
+}
+
 void InMemoryTokenStore::RevokeUser(const std::string& user_uuid) {
   std::lock_guard<std::mutex> lock(mutex_);
+  CleanupExpiredLocked();
+  const auto now = std::chrono::system_clock::now();
   for (auto& entry : tokens_) {
     if (entry.second.user_uuid == user_uuid) {
       entry.second.is_revoked = true;
+      entry.second.revoke_reason = "user-revoked";
+      entry.second.revoked_at = now;
+      tombstones_[entry.first] = TombstoneRecord{
+          user_uuid, "user-revoked", now, now + tombstone_ttl_};
     }
   }
 }
@@ -335,6 +416,10 @@ RedisTokenStore::RedisTokenStore(std::string uri) : uri_(std::move(uri)) {
 
 void RedisTokenStore::PutToken(const TokenRecord& record) {
   try {
+    if (redis_->redis.exists(TombstoneKey(record.token_hash))) {
+      throw TokenStoreError(TokenStoreError::Kind::ReplayRejected,
+                            "token hash is tombstoned");
+    }
     const auto key = TokenKey(record.token_hash);
     std::unordered_map<std::string, std::string> fields;
     fields.emplace("user_uuid", record.user_uuid);
@@ -344,6 +429,12 @@ void RedisTokenStore::PutToken(const TokenRecord& record) {
             .count();
     fields.emplace("expires_at", std::to_string(expires_at));
     fields.emplace("is_revoked", record.is_revoked ? "1" : "0");
+    fields.emplace("revoke_reason", record.revoke_reason);
+    const auto revoked_at =
+        std::chrono::duration_cast<std::chrono::seconds>(
+            record.revoked_at.time_since_epoch())
+            .count();
+    fields.emplace("revoked_at", std::to_string(revoked_at));
     redis_->redis.hset(key, fields.begin(), fields.end());
     redis_->redis.sadd(UserTokensKey(record.user_uuid), record.token_hash);
     const auto now = std::chrono::system_clock::now();
@@ -374,7 +465,79 @@ std::optional<TokenRecord> RedisTokenStore::GetToken(
     record.expires_at =
         std::chrono::system_clock::time_point(std::chrono::seconds(expires_at));
     record.is_revoked = fields["is_revoked"] == "1";
+    const auto revoked_it = fields.find("revoked_at");
+    const auto revoked_at =
+        revoked_it == fields.end() || revoked_it->second.empty()
+            ? 0
+            : std::stoll(revoked_it->second);
+    record.revoked_at =
+        std::chrono::system_clock::time_point(std::chrono::seconds(revoked_at));
+    const auto reason_it = fields.find("revoke_reason");
+    if (reason_it != fields.end()) {
+      record.revoke_reason = reason_it->second;
+    }
     return record;
+  } catch (const sw::redis::Error& ex) {
+    throw TokenStoreError(TokenStoreError::Kind::Unavailable, ex.what());
+  }
+}
+
+TokenStatus RedisTokenStore::GetTokenStatus(const std::string& token_hash) {
+  try {
+    TokenStatus status;
+    std::unordered_map<std::string, std::string> fields;
+    redis_->redis.hgetall(TokenKey(token_hash),
+                          std::inserter(fields, fields.begin()));
+    if (!fields.empty()) {
+      status.user_uuid = fields["user_uuid"];
+      if (fields["is_revoked"] == "1") {
+        status.state = TokenState::Revoked;
+        const auto reason_it = fields.find("revoke_reason");
+        if (reason_it != fields.end()) {
+          status.reason = reason_it->second;
+        }
+        const auto revoked_it = fields.find("revoked_at");
+        const auto revoked_at =
+            revoked_it == fields.end() || revoked_it->second.empty()
+                ? 0
+                : std::stoll(revoked_it->second);
+        status.revoked_at = std::chrono::system_clock::time_point(
+            std::chrono::seconds(revoked_at));
+      } else {
+        status.state = TokenState::Active;
+      }
+      return status;
+    }
+
+    const auto tombstone = redis_->redis.get(TombstoneKey(token_hash));
+    if (tombstone.has_value()) {
+      status.state = TokenState::Revoked;
+      status.reason = *tombstone;
+      status.revoked_at = std::chrono::system_clock::now();
+      return status;
+    }
+    return status;
+  } catch (const TokenStoreError&) {
+    throw;
+  } catch (const sw::redis::Error& ex) {
+    throw TokenStoreError(TokenStoreError::Kind::Unavailable, ex.what());
+  }
+}
+
+void RedisTokenStore::RevokeToken(const std::string& token_hash,
+                                  const std::string& reason) {
+  try {
+    const auto now = std::chrono::system_clock::now();
+    const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(
+                             now.time_since_epoch())
+                             .count();
+    const std::string effective_reason =
+        reason.empty() ? "revoked" : reason;
+    redis_->redis.hset(TokenKey(token_hash), "is_revoked", "1");
+    redis_->redis.hset(TokenKey(token_hash), "revoke_reason", effective_reason);
+    redis_->redis.hset(TokenKey(token_hash), "revoked_at", std::to_string(seconds));
+    redis_->redis.setex(TombstoneKey(token_hash), std::chrono::hours(24),
+                        effective_reason);
   } catch (const sw::redis::Error& ex) {
     throw TokenStoreError(TokenStoreError::Kind::Unavailable, ex.what());
   }
@@ -386,7 +549,7 @@ void RedisTokenStore::RevokeUser(const std::string& user_uuid) {
     redis_->redis.smembers(UserTokensKey(user_uuid),
                            std::inserter(tokens, tokens.begin()));
     for (const auto& token_hash : tokens) {
-      redis_->redis.hset(TokenKey(token_hash), "is_revoked", "1");
+      RevokeToken(token_hash, "user-revoked");
     }
   } catch (const sw::redis::Error& ex) {
     throw TokenStoreError(TokenStoreError::Kind::Unavailable, ex.what());
@@ -405,6 +568,17 @@ void RedisTokenStore::PutToken(const TokenRecord& /*record*/) {
 
 std::optional<TokenRecord> RedisTokenStore::GetToken(
     const std::string& /*token_hash*/) {
+  throw TokenStoreError(TokenStoreError::Kind::Unavailable,
+                        "Redis support is disabled");
+}
+
+TokenStatus RedisTokenStore::GetTokenStatus(const std::string& /*token_hash*/) {
+  throw TokenStoreError(TokenStoreError::Kind::Unavailable,
+                        "Redis support is disabled");
+}
+
+void RedisTokenStore::RevokeToken(const std::string& /*token_hash*/,
+                                  const std::string& /*reason*/) {
   throw TokenStoreError(TokenStoreError::Kind::Unavailable,
                         "Redis support is disabled");
 }

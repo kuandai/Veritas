@@ -46,6 +46,11 @@ class SaslServer {
                          veritas::auth::v1::BeginAuthResponse* response);
   grpc::Status FinishAuth(const veritas::auth::v1::FinishAuthRequest& request,
                           veritas::auth::v1::FinishAuthResponse* response);
+  grpc::Status RevokeToken(const veritas::auth::v1::RevokeTokenRequest& request,
+                           veritas::auth::v1::RevokeTokenResponse* response);
+  grpc::Status GetTokenStatus(
+      const veritas::auth::v1::GetTokenStatusRequest& request,
+      veritas::auth::v1::GetTokenStatusResponse* response);
 
  private:
   void EnsureInitialized();

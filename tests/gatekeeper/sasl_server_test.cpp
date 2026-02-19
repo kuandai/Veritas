@@ -27,6 +27,17 @@ class FailingTokenStore final : public TokenStore {
                           "token store unavailable");
   }
 
+  TokenStatus GetTokenStatus(const std::string& /*token_hash*/) override {
+    throw TokenStoreError(TokenStoreError::Kind::Unavailable,
+                          "token store unavailable");
+  }
+
+  void RevokeToken(const std::string& /*token_hash*/,
+                   const std::string& /*reason*/) override {
+    throw TokenStoreError(TokenStoreError::Kind::Unavailable,
+                          "token store unavailable");
+  }
+
   void RevokeUser(const std::string& /*user_uuid*/) override {
     throw TokenStoreError(TokenStoreError::Kind::Unavailable,
                           "token store unavailable");
@@ -242,6 +253,56 @@ TEST(SaslServerTest, TokenStoreUnavailableMapsToGrpcUnavailable) {
 
   const grpc::Status status = server.FinishAuth(finish_request, &finish_response);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::UNAVAILABLE);
+}
+
+TEST(SaslServerTest, RevokeTokenRejectsEmptyToken) {
+  SaslServer server(DefaultOptions());
+  veritas::auth::v1::RevokeTokenRequest request;
+  veritas::auth::v1::RevokeTokenResponse response;
+  const grpc::Status status = server.RevokeToken(request, &response);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
+TEST(SaslServerTest, GetTokenStatusRejectsEmptyToken) {
+  SaslServer server(DefaultOptions());
+  veritas::auth::v1::GetTokenStatusRequest request;
+  veritas::auth::v1::GetTokenStatusResponse response;
+  const grpc::Status status = server.GetTokenStatus(request, &response);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
+TEST(SaslServerTest, RevokeTokenUpdatesStatusToRevoked) {
+  SaslServer server(DefaultOptions());
+  veritas::auth::v1::BeginAuthRequest begin_request;
+  veritas::auth::v1::BeginAuthResponse begin_response;
+  begin_request.set_login_username("alice");
+  ASSERT_TRUE(server.BeginAuth(begin_request, &begin_response).ok());
+
+  veritas::auth::v1::FinishAuthRequest finish_request;
+  veritas::auth::v1::FinishAuthResponse finish_response;
+  finish_request.set_session_id(begin_response.session_id());
+  finish_request.set_client_proof("proof");
+  ASSERT_TRUE(server.FinishAuth(finish_request, &finish_response).ok());
+
+  veritas::auth::v1::GetTokenStatusRequest active_request;
+  veritas::auth::v1::GetTokenStatusResponse active_response;
+  active_request.set_refresh_token(finish_response.refresh_token());
+  ASSERT_TRUE(server.GetTokenStatus(active_request, &active_response).ok());
+  EXPECT_EQ(active_response.state(),
+            veritas::auth::v1::TOKEN_STATUS_STATE_ACTIVE);
+
+  veritas::auth::v1::RevokeTokenRequest revoke_request;
+  veritas::auth::v1::RevokeTokenResponse revoke_response;
+  revoke_request.set_refresh_token(finish_response.refresh_token());
+  revoke_request.set_reason("test-revoke");
+  ASSERT_TRUE(server.RevokeToken(revoke_request, &revoke_response).ok());
+  EXPECT_TRUE(revoke_response.revoked());
+
+  veritas::auth::v1::GetTokenStatusResponse revoked_response;
+  ASSERT_TRUE(server.GetTokenStatus(active_request, &revoked_response).ok());
+  EXPECT_EQ(revoked_response.state(),
+            veritas::auth::v1::TOKEN_STATUS_STATE_REVOKED);
+  EXPECT_EQ(revoked_response.reason(), "test-revoke");
 }
 
 }  // namespace veritas::gatekeeper

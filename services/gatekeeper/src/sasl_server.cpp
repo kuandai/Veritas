@@ -686,4 +686,72 @@ grpc::Status SaslServer::FinishAuth(
   return grpc::Status::OK;
 }
 
+grpc::Status SaslServer::RevokeToken(
+    const veritas::auth::v1::RevokeTokenRequest& request,
+    veritas::auth::v1::RevokeTokenResponse* response) {
+  if (request.refresh_token().empty()) {
+    return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                        "refresh_token is required");
+  }
+  try {
+    const std::string token_hash = HashTokenSha256(request.refresh_token());
+    token_store_->RevokeToken(token_hash, request.reason());
+    response->set_revoked(true);
+    return grpc::Status::OK;
+  } catch (const TokenStoreError& ex) {
+    if (ex.kind() == TokenStoreError::Kind::Unavailable) {
+      return grpc::Status(grpc::StatusCode::UNAVAILABLE, ex.what());
+    }
+    return grpc::Status(grpc::StatusCode::INTERNAL, ex.what());
+  } catch (const std::exception& ex) {
+    return grpc::Status(grpc::StatusCode::INTERNAL, ex.what());
+  }
+}
+
+grpc::Status SaslServer::GetTokenStatus(
+    const veritas::auth::v1::GetTokenStatusRequest& request,
+    veritas::auth::v1::GetTokenStatusResponse* response) {
+  if (request.refresh_token().empty()) {
+    return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                        "refresh_token is required");
+  }
+  try {
+    const std::string token_hash = HashTokenSha256(request.refresh_token());
+    const TokenStatus status = token_store_->GetTokenStatus(token_hash);
+    switch (status.state) {
+      case TokenState::Active:
+        response->set_state(
+            veritas::auth::v1::TOKEN_STATUS_STATE_ACTIVE);
+        break;
+      case TokenState::Revoked:
+        response->set_state(
+            veritas::auth::v1::TOKEN_STATUS_STATE_REVOKED);
+        response->set_reason(status.reason);
+        if (status.revoked_at.time_since_epoch().count() > 0) {
+          const auto seconds =
+              std::chrono::duration_cast<std::chrono::seconds>(
+                  status.revoked_at.time_since_epoch())
+                  .count();
+          response->mutable_revoked_at()->set_seconds(
+              static_cast<int64_t>(seconds));
+          response->mutable_revoked_at()->set_nanos(0);
+        }
+        break;
+      case TokenState::Unknown:
+      default:
+        response->set_state(
+            veritas::auth::v1::TOKEN_STATUS_STATE_UNKNOWN);
+        break;
+    }
+    return grpc::Status::OK;
+  } catch (const TokenStoreError& ex) {
+    if (ex.kind() == TokenStoreError::Kind::Unavailable) {
+      return grpc::Status(grpc::StatusCode::UNAVAILABLE, ex.what());
+    }
+    return grpc::Status(grpc::StatusCode::INTERNAL, ex.what());
+  } catch (const std::exception& ex) {
+    return grpc::Status(grpc::StatusCode::INTERNAL, ex.what());
+  }
+}
+
 }  // namespace veritas::gatekeeper

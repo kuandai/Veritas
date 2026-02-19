@@ -22,8 +22,10 @@ class AuthMetrics {
                        std::size_t max_uuid_keys = 10000);
 
   void Record(std::string_view ip, std::string_view user_uuid, bool success);
+  void RecordSecurityEvent(std::string_view event_name);
   std::size_t IpKeyCount() const;
   std::size_t UuidKeyCount() const;
+  uint64_t SecurityEventCount(std::string_view event_name) const;
   std::optional<AuthCounter> GetIpCounter(std::string_view ip) const;
   std::optional<AuthCounter> GetUuidCounter(std::string_view user_uuid) const;
 
@@ -38,6 +40,7 @@ class AuthMetrics {
   mutable std::mutex mutex_;
   std::unordered_map<std::string, AuthCounter> ip_counters_;
   std::unordered_map<std::string, AuthCounter> uuid_counters_;
+  std::unordered_map<std::string, uint64_t> security_event_counters_;
   std::size_t max_ip_keys_;
   std::size_t max_uuid_keys_;
 };

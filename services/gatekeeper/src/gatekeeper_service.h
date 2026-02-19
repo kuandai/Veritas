@@ -21,6 +21,12 @@ class GatekeeperServiceImpl final : public Gatekeeper::Service {
   grpc::Status FinishAuth(grpc::ServerContext* context,
                           const FinishAuthRequest* request,
                           FinishAuthResponse* response) override;
+  grpc::Status RevokeToken(grpc::ServerContext* context,
+                           const RevokeTokenRequest* request,
+                           RevokeTokenResponse* response) override;
+  grpc::Status GetTokenStatus(grpc::ServerContext* context,
+                              const GetTokenStatusRequest* request,
+                              GetTokenStatusResponse* response) override;
 
  private:
   veritas::gatekeeper::SaslServer sasl_server_;
