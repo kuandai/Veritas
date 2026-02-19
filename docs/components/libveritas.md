@@ -46,6 +46,10 @@ token rotation callbacks, and a security context for transport layers (TLS/QUIC)
   - LKG behavior during transient failures and lock transition after
     grace-window exhaustion.
   - Auth-server-unreachable and persistent-rotation-failure alerts.
+- Revocation lifecycle:
+  - `StartRevocationMonitor`/`StopRevocationMonitor` polling loop.
+  - Client-side `GetTokenStatus` checks via Gatekeeper.
+  - `TokenRevoked` alert emission and `LOCKED` transition on revocation.
 - Transport context hardening:
   - Thread-safe `SSL_CTX` swap with reader-safe shared ownership.
   - TLS 1.3-only context construction.
@@ -56,7 +60,6 @@ token rotation callbacks, and a security context for transport layers (TLS/QUIC)
 ## Placeholders / incomplete
 
 - Rotation worker depends on configured credential provider and auth target.
-- Revocation polling/lock propagation is not yet wired.
 - Credential-provider abstraction is local-only (no Notary integration yet).
 
 ## Aspirational

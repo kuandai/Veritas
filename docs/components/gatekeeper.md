@@ -11,6 +11,7 @@ Authenticate clients and issue refresh tokens via a gRPC interface.
   window, optional chain verification when a CA bundle is provided).
 - Optional mTLS enforcement via CA bundle + client cert requirement.
 - `BeginAuth` / `FinishAuth` handlers exist.
+- `RevokeToken` / `GetTokenStatus` handlers exist.
 - Per-IP rate limiting (5/minute) with oldest-bucket eviction when the
   in-memory key cap is reached (default: 10,000 keys).
 - Structured logging to stdout (`timestamp`, `ip`, `action`, `status`,
@@ -37,6 +38,11 @@ Authenticate clients and issue refresh tokens via a gRPC interface.
   - Session ids stored in a TTL cache and consumed atomically on `FinishAuth`.
   - Refresh token issuance + SHA-256 hashing stored in Redis when
     `TOKEN_STORE_URI` is set (in-memory fallback otherwise).
+  - Revocation/tombstone behavior:
+    - `RevokeToken` marks token status revoked with reason metadata.
+    - revoked token hashes are tombstoned for 24 hours.
+    - replay attempts using tombstoned token hashes are rejected.
+    - `GetTokenStatus` returns `ACTIVE`, `REVOKED`, or `UNKNOWN`.
   - Redis URI parsing supports `redis://` and `rediss://`.
     `rediss://` enforces fail-closed TLS config validation:
     `verify_peer=true` (default) requires `cacert` or `cacertdir` query
@@ -89,12 +95,15 @@ Redis token-store URIs:
   strict constant-size envelope encoding for all responses is not implemented.
 - Redis token store adapter exists; persistence is optional via
   `TOKEN_STORE_URI` (in-memory fallback otherwise).
+- Tombstone retention is fixed at 24 hours (no runtime tuning yet).
 - Redis TLS requires a `redis-plus-plus` build with TLS enabled; Gatekeeper
   fails closed when `rediss://` is configured without TLS-capable client libs.
 - gRPC error mapping is limited to current SASL status handling.
 - Unit tests cover fake salt, token hashing, rate limiting, config validation,
-  TLS credential validation, token store behavior, and session cache handling.
-- Integration tests cover SRP handshake happy path + invalid proof (skipped
+  TLS credential validation, token store behavior (including tombstones/replay
+  rejection), and session cache handling.
+- Integration tests cover SRP handshake happy path + invalid proof + revocation
+  status paths (skipped
   if SRP is unavailable in the SASL build).
 
 ## Aspirational

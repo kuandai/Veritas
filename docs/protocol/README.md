@@ -15,6 +15,10 @@ Gatekeeper payload semantics (current implementation):
   payload; `salt` is only populated for deterministic fake responses.
 - `FinishAuthRequest.client_proof` and `FinishAuthResponse.server_proof` carry
   the SASL SRP proof/final payloads.
+- `RevokeTokenRequest` revokes a refresh token and carries optional reason
+  metadata.
+- `GetTokenStatusResponse.state` reports token lifecycle status:
+  `ACTIVE`, `REVOKED`, or `UNKNOWN`.
 
 ## Placeholders / incomplete
 

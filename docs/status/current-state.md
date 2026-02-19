@@ -62,6 +62,10 @@ Implemented
   - caller ALPN validation,
   - leaf + intermediate chain ingestion checks.
 - Analytics callback hooks are available for auth/rotation outcomes.
+- Revocation monitoring is implemented:
+  - `StartRevocationMonitor` / `StopRevocationMonitor`,
+  - polling `GetTokenStatus`,
+  - `TokenRevoked` alert + `LOCKED` transition on revoked status.
 - `GatekeeperClientConfig.allow_insecure` is accepted in non-release builds;
   release builds reject insecure transport.
 - Storage layer includes a `TokenStore` abstraction with:
@@ -73,7 +77,6 @@ Implemented
   - explicit clear via `ClearPersistedIdentity()`.
 
 Placeholders / incomplete
-- Revocation polling and lock propagation are not yet implemented.
 - No Notary-backed credential provider path yet.
 
 Aspirational
@@ -121,6 +124,7 @@ Implemented
   optional chain verification with CA bundle).
 - Optional mTLS enforcement with client cert verification.
 - `BeginAuth` and `FinishAuth` handlers are present.
+- `RevokeToken` and `GetTokenStatus` handlers are present.
 - Per-IP rate limiting (5/minute) with oldest-bucket eviction when the
   in-memory key cap is reached (default: 10,000 keys).
 - Structured auth event logging to stdout (`timestamp`, `ip`, `action`,
@@ -140,6 +144,10 @@ Implemented
   - Session ids stored in a TTL cache and consumed atomically on `FinishAuth`.
   - Refresh token issuance + SHA-256 hashing, persisted to Redis when
     `TOKEN_STORE_URI` is set (in-memory fallback otherwise).
+  - Revocation/tombstone model:
+    - revoked tokens carry reason metadata + revocation timestamp.
+    - tombstone retention prevents replay of revoked token hashes.
+    - status API returns `ACTIVE` / `REVOKED` / `UNKNOWN`.
   - Redis URI parser supports `redis://` and `rediss://` with fail-closed TLS
     validation (`verify_peer=true` requires `cacert`/`cacertdir`; client cert
     auth requires both `cert` and `key`).
@@ -152,11 +160,13 @@ Placeholders / incomplete
   via config/env is not implemented.
 - Redis token store adapter exists; persistence is optional via
   `TOKEN_STORE_URI` (in-memory fallback otherwise).
+- Tombstone retention is fixed (24h) and not runtime-configurable.
 - Redis TLS requires `redis-plus-plus` to be built with TLS support.
 - SASL error mapping is limited to a minimal gRPC status translation.
 - Unit tests cover fake salt, token hashing, rate limiting, config validation,
   TLS credential validation, token store behavior, and session cache handling.
-- Integration tests cover SRP handshake happy path + invalid proof.
+- Integration tests cover SRP handshake happy path + invalid proof + client
+  revocation lock propagation.
 - Redis TLS integration tests cover fail-closed behavior for invalid `rediss://`
   configuration and optional external endpoint validation via
   `VERITAS_REDIS_TLS_URI`.
@@ -169,9 +179,10 @@ Aspirational
 ## Cross-cutting gaps (incomplete)
 
 - SASL verifier provisioning (still external sasldb/auxprop tooling).
-- Token store persistence and revocation flows (beyond current Redis adapter).
 - Shared storage layer and cross-service integration.
-- TSAN lane is not wired in CI (strict SRP lane is wired).
+- TSAN lane is wired as nightly/workflow-dispatch in
+  `.github/workflows/security-srp.yml`.
+- Revocation integration lane is wired in CI alongside strict SRP.
 - External Redis TLS connectivity validation requires a provisioned test endpoint.
 - Release transport policy gates were validated in `build_release` via:
   `ConfigTest.LoadConfigRejectsSaslDisabled` and
