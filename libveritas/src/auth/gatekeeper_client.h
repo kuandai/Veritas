@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <string>
 #include <stdexcept>
@@ -21,6 +22,18 @@ struct FinishAuthResult {
   std::string server_proof;
 };
 
+enum class TokenStatusState {
+  Unknown,
+  Active,
+  Revoked,
+};
+
+struct TokenStatusResult {
+  TokenStatusState state = TokenStatusState::Unknown;
+  std::string reason;
+  std::chrono::system_clock::time_point revoked_at{};
+};
+
 class GatekeeperClient {
  public:
   explicit GatekeeperClient(const GatekeeperClientConfig& config);
@@ -29,6 +42,9 @@ class GatekeeperClient {
                             std::string_view client_start);
   FinishAuthResult FinishAuth(const std::string& session_id,
                               const std::string& client_proof);
+  void RevokeToken(const std::string& refresh_token,
+                   const std::string& reason);
+  TokenStatusResult GetTokenStatus(const std::string& refresh_token);
 
  private:
   std::shared_ptr<grpc::Channel> channel_;

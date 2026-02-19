@@ -331,5 +331,33 @@ TEST(TransportContextTest, ConcurrentReadsDuringSwapAreSafe) {
   EXPECT_NE(manager.get_quic_context().ctx, nullptr);
 }
 
+TEST(AnalyticsTest, FailureEventsDoNotExposePasswordMaterial) {
+  const std::string password = "super-secret-password";
+  IdentityManager manager(
+      [] { return std::string("unused"); }, std::nullopt, &ReadyEntropy,
+      [&](const GatekeeperClientConfig&, const std::string&, const std::string&)
+          -> AuthResult {
+        throw std::runtime_error("auth failed for super-secret-password");
+      });
+
+  std::vector<AnalyticsEvent> events;
+  manager.on_analytics([&](const AnalyticsEvent& event) { events.push_back(event); });
+
+  GatekeeperClientConfig config;
+  config.target = "127.0.0.1:50051";
+  config.allow_insecure = true;
+
+  try {
+    static_cast<void>(manager.Authenticate(config, "alice", password));
+    FAIL() << "Authenticate should fail";
+  } catch (const IdentityManagerError&) {
+  }
+
+  ASSERT_FALSE(events.empty());
+  for (const auto& event : events) {
+    EXPECT_EQ(event.detail.find(password), std::string::npos);
+  }
+}
+
 }  // namespace
 }  // namespace veritas

@@ -3,14 +3,17 @@
 #include "auth/sasl_client.h"
 
 #include <chrono>
+#include <atomic>
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <random>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -446,6 +449,79 @@ TEST(GatekeeperClientIntegrationTest, InvalidProofIsUnauthenticated) {
   } catch (const GatekeeperError& ex) {
     EXPECT_EQ(ex.code(), grpc::StatusCode::UNAUTHENTICATED);
   }
+}
+
+TEST(GatekeeperClientIntegrationTest, GetTokenStatusRejectsEmptyToken) {
+  GatekeeperHarness harness;
+  const auto setup = StartGatekeeper(&harness);
+  if (setup.kind == SaslSetupResult::Kind::Skip) {
+    GTEST_SKIP() << setup.message;
+  }
+  ASSERT_EQ(setup.kind, SaslSetupResult::Kind::Ok) << setup.message;
+
+  GatekeeperClientConfig config;
+  config.target = harness.target;
+  config.allow_insecure = true;
+
+  GatekeeperClient client(config);
+  try {
+    static_cast<void>(client.GetTokenStatus(""));
+    FAIL() << "GetTokenStatus should reject empty token payload";
+  } catch (const GatekeeperError& ex) {
+    EXPECT_EQ(ex.code(), grpc::StatusCode::INVALID_ARGUMENT);
+  }
+}
+
+TEST(IdentityManagerIntegrationTest, RevocationTransitionsToLocked) {
+  GatekeeperHarness harness;
+  const auto setup = StartGatekeeper(&harness);
+  if (setup.kind == SaslSetupResult::Kind::Skip) {
+    GTEST_SKIP() << setup.message;
+  }
+  ASSERT_EQ(setup.kind, SaslSetupResult::Kind::Ok) << setup.message;
+
+  GatekeeperClientConfig config;
+  config.target = harness.target;
+  config.allow_insecure = true;
+
+  ::veritas::IdentityManager manager([] { return std::string("unused"); });
+  const auto result =
+      manager.Authenticate(config, harness.username, harness.password);
+  ASSERT_FALSE(result.refresh_token.empty());
+
+  std::atomic<bool> saw_revoked_alert{false};
+  manager.on_security_alert([&](::veritas::AlertType alert) {
+    if (alert == ::veritas::AlertType::TokenRevoked) {
+      saw_revoked_alert.store(true);
+    }
+  });
+
+  ::veritas::RevocationPolicy policy;
+  policy.poll_interval = std::chrono::milliseconds(100);
+  policy.lock_deadline = std::chrono::seconds(60);
+  manager.StartRevocationMonitor(config, policy);
+
+  GatekeeperClient client(config);
+  const auto revoked_at = std::chrono::steady_clock::now();
+  client.RevokeToken(result.refresh_token, "integration-revoke");
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  std::optional<std::chrono::steady_clock::time_point> locked_at;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (manager.GetState() == ::veritas::IdentityState::Locked) {
+      locked_at = std::chrono::steady_clock::now();
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+  }
+
+  manager.StopRevocationMonitor();
+  EXPECT_EQ(manager.GetState(), ::veritas::IdentityState::Locked);
+  EXPECT_TRUE(saw_revoked_alert.load());
+  ASSERT_TRUE(locked_at.has_value());
+  const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+      *locked_at - revoked_at);
+  EXPECT_LE(elapsed.count(), 60);
 }
 
 }  // namespace veritas::auth

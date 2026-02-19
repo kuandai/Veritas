@@ -96,6 +96,11 @@ struct TransportContextConfig {
   std::string alpn;
 };
 
+struct RevocationPolicy {
+  std::chrono::milliseconds poll_interval{5000};
+  std::chrono::seconds lock_deadline{60};
+};
+
 class RotationCredentialProvider {
  public:
   virtual ~RotationCredentialProvider() = default;
@@ -170,6 +175,11 @@ class IdentityManager {
   void StopRotation();
   bool IsRotationRunning() const;
 
+  void StartRevocationMonitor(const GatekeeperClientConfig& config,
+                              RevocationPolicy policy = RevocationPolicy{});
+  void StopRevocationMonitor();
+  bool IsRevocationMonitorRunning() const;
+
   static std::chrono::system_clock::time_point ComputeRotationDeadline(
       const AuthResult& identity,
       double refresh_ratio,
@@ -188,6 +198,7 @@ class IdentityManager {
 
  private:
   void RotationLoop(std::stop_token stop_token);
+  void RevocationLoop(std::stop_token stop_token);
   bool SleepWithStop(std::stop_token stop_token, std::chrono::milliseconds wait);
   AuthResult RunAuthFlow(const GatekeeperClientConfig& config,
                          const std::string& username,
@@ -222,6 +233,11 @@ class IdentityManager {
   std::string rotation_username_;
   RotationPolicy rotation_policy_{};
   std::shared_ptr<RotationCredentialProvider> rotation_provider_;
+
+  std::jthread revocation_worker_;
+  std::atomic<bool> revocation_running_{false};
+  GatekeeperClientConfig revocation_config_;
+  RevocationPolicy revocation_policy_{};
 };
 
 using Manager = IdentityManager;

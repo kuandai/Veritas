@@ -244,6 +244,7 @@ IdentityManager::IdentityManager(CredentialProvider credential_provider,
 
 IdentityManager::~IdentityManager() {
   StopRotation();
+  StopRevocationMonitor();
 }
 
 SecurityContext IdentityManager::get_quic_context() {
@@ -322,12 +323,14 @@ AuthResult IdentityManager::Authenticate(const GatekeeperClientConfig& config,
     if (ex.code() == grpc::StatusCode::UNAVAILABLE) {
       SetLastError(IdentityErrorCode::AuthServerUnavailable);
       EmitAlert(AlertType::AuthServerUnreachable);
-      EmitAnalytics(AnalyticsEventType::AuthFailure, failure_count, ex.what());
+      EmitAnalytics(AnalyticsEventType::AuthFailure, failure_count,
+                    "auth_server_unavailable");
       throw IdentityManagerError(IdentityErrorCode::AuthServerUnavailable,
                                  ex.what());
     }
     SetLastError(IdentityErrorCode::AuthenticationFailed);
-    EmitAnalytics(AnalyticsEventType::AuthFailure, failure_count, ex.what());
+    EmitAnalytics(AnalyticsEventType::AuthFailure, failure_count,
+                  "authentication_failed");
     if (failure_count >= 3) {
       EmitAlert(AlertType::RepeatedAuthFailures);
     }
@@ -336,7 +339,8 @@ AuthResult IdentityManager::Authenticate(const GatekeeperClientConfig& config,
   } catch (const std::exception& ex) {
     const int failure_count = consecutive_auth_failures_.fetch_add(1) + 1;
     SetLastError(IdentityErrorCode::AuthenticationFailed);
-    EmitAnalytics(AnalyticsEventType::AuthFailure, failure_count, ex.what());
+    EmitAnalytics(AnalyticsEventType::AuthFailure, failure_count,
+                  "authentication_failed");
     if (failure_count >= 3) {
       EmitAlert(AlertType::RepeatedAuthFailures);
     }
@@ -497,6 +501,44 @@ bool IdentityManager::IsRotationRunning() const {
   return rotation_running_.load();
 }
 
+void IdentityManager::StartRevocationMonitor(const GatekeeperClientConfig& config,
+                                             RevocationPolicy policy) {
+  if (config.target.empty()) {
+    throw std::runtime_error("revocation monitor target is required");
+  }
+  if (policy.poll_interval.count() <= 0) {
+    throw std::runtime_error("revocation poll interval must be positive");
+  }
+  if (policy.poll_interval >
+      std::chrono::duration_cast<std::chrono::milliseconds>(policy.lock_deadline)) {
+    throw std::runtime_error(
+        "revocation poll interval must not exceed lock deadline");
+  }
+
+  StopRevocationMonitor();
+  {
+    std::lock_guard<std::mutex> lock(rotation_mutex_);
+    revocation_config_ = config;
+    revocation_policy_ = policy;
+  }
+  revocation_running_.store(true);
+  revocation_worker_ = std::jthread([this](std::stop_token token) {
+    RevocationLoop(token);
+  });
+}
+
+void IdentityManager::StopRevocationMonitor() {
+  if (revocation_worker_.joinable()) {
+    revocation_worker_.request_stop();
+    revocation_worker_.join();
+  }
+  revocation_running_.store(false);
+}
+
+bool IdentityManager::IsRevocationMonitorRunning() const {
+  return revocation_running_.load();
+}
+
 bool IdentityManager::SleepWithStop(std::stop_token stop_token,
                                     std::chrono::milliseconds wait) {
   if (wait.count() <= 0) {
@@ -570,8 +612,14 @@ void IdentityManager::RotationLoop(std::stop_token stop_token) {
       } catch (const IdentityManagerError& ex) {
         ++consecutive_rotation_failures;
         EmitAlert(AlertType::RotationFailure);
+        std::string detail = "rotation_failed";
+        if (ex.code() == IdentityErrorCode::AuthServerUnavailable) {
+          detail = "auth_server_unavailable";
+        } else if (ex.code() == IdentityErrorCode::EntropyUnavailable) {
+          detail = "entropy_unavailable";
+        }
         EmitAnalytics(AnalyticsEventType::RotationFailure,
-                      consecutive_rotation_failures, ex.what());
+                      consecutive_rotation_failures, detail);
         if (ex.code() == IdentityErrorCode::AuthServerUnavailable) {
           EmitAlert(AlertType::AuthServerUnreachable);
         }
@@ -606,6 +654,47 @@ void IdentityManager::RotationLoop(std::stop_token stop_token) {
     }
   }
   rotation_running_.store(false);
+}
+
+void IdentityManager::RevocationLoop(std::stop_token stop_token) {
+  while (!stop_token.stop_requested()) {
+    GatekeeperClientConfig config;
+    RevocationPolicy policy;
+    {
+      std::lock_guard<std::mutex> lock(rotation_mutex_);
+      config = revocation_config_;
+      policy = revocation_policy_;
+    }
+
+    const auto current = GetPersistedIdentity();
+    if (!current.has_value() || current->refresh_token.empty()) {
+      if (!SleepWithStop(stop_token, policy.poll_interval)) {
+        break;
+      }
+      continue;
+    }
+
+    try {
+      veritas::auth::GatekeeperClient client(config);
+      const auto status = client.GetTokenStatus(current->refresh_token);
+      if (status.state == veritas::auth::TokenStatusState::Revoked) {
+        EmitAlert(AlertType::TokenRevoked);
+        EmitAnalytics(AnalyticsEventType::RevocationDetected, 1, status.reason);
+        try {
+          Lock();
+        } catch (const std::exception&) {
+        }
+        break;
+      }
+    } catch (const std::exception&) {
+      // Keep polling; revocation monitoring should not break auth flow on errors.
+    }
+
+    if (!SleepWithStop(stop_token, policy.poll_interval)) {
+      break;
+    }
+  }
+  revocation_running_.store(false);
 }
 
 void IdentityManager::on_rotation(RotationCallback callback) {

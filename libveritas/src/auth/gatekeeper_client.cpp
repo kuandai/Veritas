@@ -83,4 +83,55 @@ FinishAuthResult GatekeeperClient::FinishAuth(const std::string& session_id,
   return result;
 }
 
+void GatekeeperClient::RevokeToken(const std::string& refresh_token,
+                                   const std::string& reason) {
+  veritas::auth::v1::RevokeTokenRequest request;
+  veritas::auth::v1::RevokeTokenResponse response;
+  request.set_refresh_token(refresh_token);
+  request.set_reason(reason);
+
+  grpc::ClientContext context;
+  const grpc::Status status = stub_->RevokeToken(&context, request, &response);
+  if (!status.ok()) {
+    throw GatekeeperError(status.error_code(),
+                          "RevokeToken failed: " + status.error_message());
+  }
+}
+
+TokenStatusResult GatekeeperClient::GetTokenStatus(
+    const std::string& refresh_token) {
+  veritas::auth::v1::GetTokenStatusRequest request;
+  veritas::auth::v1::GetTokenStatusResponse response;
+  request.set_refresh_token(refresh_token);
+
+  grpc::ClientContext context;
+  const grpc::Status status =
+      stub_->GetTokenStatus(&context, request, &response);
+  if (!status.ok()) {
+    throw GatekeeperError(status.error_code(),
+                          "GetTokenStatus failed: " + status.error_message());
+  }
+
+  TokenStatusResult result;
+  switch (response.state()) {
+    case veritas::auth::v1::TOKEN_STATUS_STATE_ACTIVE:
+      result.state = TokenStatusState::Active;
+      break;
+    case veritas::auth::v1::TOKEN_STATUS_STATE_REVOKED:
+      result.state = TokenStatusState::Revoked;
+      break;
+    case veritas::auth::v1::TOKEN_STATUS_STATE_UNKNOWN:
+    case veritas::auth::v1::TOKEN_STATUS_STATE_UNSPECIFIED:
+    default:
+      result.state = TokenStatusState::Unknown;
+      break;
+  }
+  result.reason = response.reason();
+  if (response.has_revoked_at()) {
+    result.revoked_at = std::chrono::system_clock::time_point(
+        std::chrono::seconds(response.revoked_at().seconds()));
+  }
+  return result;
+}
+
 }  // namespace veritas::auth
