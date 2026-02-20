@@ -132,6 +132,15 @@ Implemented
   - TLS 1.3-only server credential setup,
   - optional mTLS policy via `NOTARY_TLS_REQUIRE_CLIENT_CERT`,
   - gRPC health service enablement + serving status initialization.
+- Gatekeeper-backed authorization is wired into mutating Notary RPCs:
+  - `NOTARY_GATEKEEPER_TARGET` is required.
+  - secure Gatekeeper transport requires `NOTARY_GATEKEEPER_CA_BUNDLE` unless
+    `NOTARY_GATEKEEPER_ALLOW_INSECURE=true`.
+  - token state mapping:
+    - `ACTIVE` -> authz success,
+    - `REVOKED` -> `PERMISSION_DENIED`,
+    - `UNKNOWN` / `UNSPECIFIED` -> `UNAUTHENTICATED`,
+    - Gatekeeper transport unavailable -> `UNAVAILABLE` fail-closed.
 - Notary Sprint 1 trust model document exists:
   `docs/architecture/notary-threat-model.md`.
 - Notary PKI policy baseline exists:
@@ -145,12 +154,15 @@ Implemented
 - Structured JSON event logging is available for startup and RPC-path events.
 - Unit/integration tests cover:
   - config validation and read-file behavior,
+  - Gatekeeper token-status authorizer mapping and gRPC path,
+  - mutating RPC authz-gate behavior (deny/allow placeholder transition),
   - signer validation hooks,
   - startup success with health-service availability,
   - fail-closed startup on invalid signer material.
 
 Placeholders / incomplete
-- Notary RPC business logic is not implemented (`UNIMPLEMENTED` handlers).
+- Notary issuance/renewal/revocation/status business logic is not implemented;
+  mutating handlers return `FAILED_PRECONDITION` after successful authz.
 - OpenSSL signer issuance method is a placeholder (not implemented).
 
 Aspirational
