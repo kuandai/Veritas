@@ -86,10 +86,19 @@ Aspirational
 
 Implemented
 - `protocol/gatekeeper.proto` defines the Gatekeeper gRPC API.
+- `protocol/notary.proto` defines a frozen Notary v1 contract for:
+  - certificate issuance,
+  - renewal,
+  - revocation,
+  - status lookup.
+- Notary contract includes structured service-level enums/messages for:
+  - error classification (`NotaryErrorCode`, `NotaryErrorDetail`),
+  - certificate lifecycle state (`CertificateStatusState`).
 
 Placeholders / incomplete
 - `protocol/identity.proto` is explicitly a placeholder.
-- No explicit versioning or error model beyond gRPC status codes.
+- `notary.proto` is contract-only; there is no runtime Notary service behavior yet.
+- Cross-service protocol version negotiation is not implemented.
 
 Aspirational
 - Full protocol surface for identity, token issuance, and notary services.
@@ -109,6 +118,9 @@ Aspirational
 
 Implemented
 - Minimal CLI that prints the shared build id.
+- Notary Sprint 1 trust model document exists:
+  `docs/architecture/notary-threat-model.md`.
+- Notary v1 RPC contract is frozen in `protocol/notary.proto`.
 
 Placeholders / incomplete
 - No notary logic implemented.

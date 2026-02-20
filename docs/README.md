@@ -6,6 +6,7 @@ to separate architecture, component docs, protocols, and status snapshots.
 ## Index
 
 - `architecture/overview.md`: system-level overview and boundaries.
+- `architecture/notary-threat-model.md`: Notary trust boundaries and attacker model.
 - `build.md`: build instructions (including SRP-enabled SASL recipe).
 - `components/`
   - `components/gatekeeper.md`

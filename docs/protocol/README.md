@@ -7,6 +7,11 @@ Define gRPC/Protobuf interfaces for services.
 ## Current definitions
 
 - `protocol/gatekeeper.proto`: Gatekeeper gRPC service and messages.
+- `protocol/notary.proto`: Notary v1 gRPC contract:
+  - `IssueCertificate`
+  - `RenewCertificate`
+  - `RevokeCertificate`
+  - `GetCertificateStatus`
 - `protocol/identity.proto`: **placeholder** message.
 
 Gatekeeper payload semantics (current implementation):
@@ -20,11 +25,24 @@ Gatekeeper payload semantics (current implementation):
 - `GetTokenStatusResponse.state` reports token lifecycle status:
   `ACTIVE`, `REVOKED`, or `UNKNOWN`.
 
+Notary payload semantics (contract freeze, implementation pending):
+- `IssueCertificateRequest` and `RenewCertificateRequest` carry
+  `refresh_token`, requested lifetime, and `idempotency_key`.
+- `RevokeCertificateRequest` carries `refresh_token`, target certificate serial,
+  revocation reason, and actor context.
+- `GetCertificateStatusResponse.state` reports lifecycle state:
+  `ACTIVE`, `REVOKED`, `EXPIRED`, or `UNKNOWN`.
+- `NotaryErrorDetail` + `NotaryErrorCode` define service-level structured error
+  semantics alongside gRPC status.
+
 ## Placeholders / incomplete
 
 - `identity.proto` is explicitly a placeholder.
-- No explicit protocol versioning or service-level error model.
+- `notary.proto` is a frozen contract only; no server-side behavior is
+  implemented yet.
+- Cross-service protocol version negotiation is not implemented.
 
 ## Aspirational
 
-- Complete identity, token, and notary protocol definitions.
+- Complete identity and notary runtime implementations behind the frozen
+  protocol contracts.
