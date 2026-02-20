@@ -696,5 +696,90 @@ TEST(NotaryServiceTest, RevokeCertificateRejectsMissingActorOrReason) {
       grpc::StatusCode::INVALID_ARGUMENT);
 }
 
+TEST(NotaryServiceTest, LifecycleIssueRenewRevokeStatus) {
+  auto authorizer = std::make_shared<FixedAuthorizer>(grpc::Status::OK);
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  NotaryServiceImpl service(authorizer, signer, store);
+
+  const auto now = std::chrono::system_clock::now();
+  SigningResult issued_result;
+  issued_result.certificate_serial = "serial-issue";
+  issued_result.certificate_pem = "leaf-issue";
+  issued_result.certificate_chain_pem = "chain-issue";
+  issued_result.not_before = now;
+  issued_result.not_after = now + std::chrono::minutes(10);
+  signer->SetNextIssueResult(issued_result);
+
+  grpc::ServerContext issue_context;
+  veritas::notary::v1::IssueCertificateRequest issue_request;
+  veritas::notary::v1::IssueCertificateResponse issue_response;
+  issue_request.set_refresh_token("token");
+  issue_request.set_csr_der("csr");
+  issue_request.set_requested_ttl_seconds(600);
+  issue_request.set_idempotency_key("idem-issue");
+  ASSERT_TRUE(
+      service.IssueCertificate(&issue_context, &issue_request, &issue_response)
+          .ok());
+  ASSERT_TRUE(issue_response.issued());
+  EXPECT_EQ(issue_response.certificate_serial(), "serial-issue");
+
+  SigningResult renewed_result;
+  renewed_result.certificate_serial = "serial-renewed";
+  renewed_result.certificate_pem = "leaf-renewed";
+  renewed_result.certificate_chain_pem = "chain-renewed";
+  renewed_result.not_before = now;
+  renewed_result.not_after = now + std::chrono::minutes(30);
+  signer->SetNextRenewResult(renewed_result);
+
+  grpc::ServerContext renew_context;
+  veritas::notary::v1::RenewCertificateRequest renew_request;
+  veritas::notary::v1::RenewCertificateResponse renew_response;
+  renew_request.set_refresh_token("token");
+  renew_request.set_certificate_serial("serial-issue");
+  renew_request.set_requested_ttl_seconds(1200);
+  renew_request.set_idempotency_key("idem-renew");
+  ASSERT_TRUE(
+      service.RenewCertificate(&renew_context, &renew_request, &renew_response)
+          .ok());
+  ASSERT_TRUE(renew_response.renewed());
+  EXPECT_EQ(renew_response.certificate_serial(), "serial-renewed");
+
+  grpc::ServerContext active_status_context;
+  veritas::notary::v1::GetCertificateStatusRequest active_status_request;
+  veritas::notary::v1::GetCertificateStatusResponse active_status_response;
+  active_status_request.set_certificate_serial("serial-renewed");
+  ASSERT_TRUE(service.GetCertificateStatus(&active_status_context,
+                                           &active_status_request,
+                                           &active_status_response)
+                  .ok());
+  EXPECT_EQ(active_status_response.state(),
+            veritas::notary::v1::CERTIFICATE_STATUS_STATE_ACTIVE);
+
+  grpc::ServerContext revoke_context;
+  veritas::notary::v1::RevokeCertificateRequest revoke_request;
+  veritas::notary::v1::RevokeCertificateResponse revoke_response;
+  revoke_request.set_refresh_token("token");
+  revoke_request.set_certificate_serial("serial-renewed");
+  revoke_request.set_reason("TOKEN_REVOKED");
+  revoke_request.set_actor("smoke");
+  ASSERT_TRUE(
+      service.RevokeCertificate(&revoke_context, &revoke_request, &revoke_response)
+          .ok());
+  ASSERT_TRUE(revoke_response.revoked());
+
+  grpc::ServerContext revoked_status_context;
+  veritas::notary::v1::GetCertificateStatusRequest revoked_status_request;
+  veritas::notary::v1::GetCertificateStatusResponse revoked_status_response;
+  revoked_status_request.set_certificate_serial("serial-renewed");
+  ASSERT_TRUE(service.GetCertificateStatus(&revoked_status_context,
+                                           &revoked_status_request,
+                                           &revoked_status_response)
+                  .ok());
+  EXPECT_EQ(revoked_status_response.state(),
+            veritas::notary::v1::CERTIFICATE_STATUS_STATE_REVOKED);
+  EXPECT_EQ(revoked_status_response.reason(), "TOKEN_REVOKED");
+}
+
 }  // namespace
 }  // namespace veritas::notary
