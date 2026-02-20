@@ -17,6 +17,7 @@ namespace {
 
 constexpr uint32_t kMinIssueTtlSeconds = 60;
 constexpr uint32_t kMaxIssueTtlSeconds = 24 * 60 * 60;
+constexpr auto kRenewalOverlapWindow = std::chrono::minutes(15);
 
 grpc::Status IssuePipelinePlaceholderStatus() {
   return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
@@ -63,6 +64,13 @@ grpc::Status StatusWithNotaryError(
   return grpc::Status(TransportStatusForNotaryCode(code), std::string(detail));
 }
 
+grpc::Status StatusWithNotaryError(
+    veritas::notary::v1::RenewCertificateResponse* response,
+    veritas::notary::v1::NotaryErrorCode code, std::string_view detail) {
+  SetError(response->mutable_error(), code, detail);
+  return grpc::Status(TransportStatusForNotaryCode(code), std::string(detail));
+}
+
 void FillTimestamp(
     std::chrono::system_clock::time_point tp,
     google::protobuf::Timestamp* timestamp) {
@@ -78,6 +86,17 @@ void FillIssuedResponseFromRecord(
     const veritas::shared::IssuanceRecord& record,
     veritas::notary::v1::IssueCertificateResponse* response) {
   response->set_issued(true);
+  response->set_certificate_serial(record.certificate_serial);
+  response->set_certificate_pem(record.certificate_pem);
+  response->set_certificate_chain_pem(record.certificate_chain_pem);
+  FillTimestamp(record.issued_at, response->mutable_not_before());
+  FillTimestamp(record.expires_at, response->mutable_not_after());
+}
+
+void FillRenewedResponseFromRecord(
+    const veritas::shared::IssuanceRecord& record,
+    veritas::notary::v1::RenewCertificateResponse* response) {
+  response->set_renewed(true);
   response->set_certificate_serial(record.certificate_serial);
   response->set_certificate_pem(record.certificate_pem);
   response->set_certificate_chain_pem(record.certificate_chain_pem);
@@ -118,9 +137,67 @@ grpc::Status MapStoreErrorToIssueStatus(
   }
 }
 
+grpc::Status MapStoreErrorToRenewStatus(
+    const veritas::shared::SharedStoreError& error,
+    veritas::notary::v1::RenewCertificateResponse* response) {
+  using Kind = veritas::shared::SharedStoreError::Kind;
+  switch (error.kind()) {
+    case Kind::InvalidArgument:
+      return StatusWithNotaryError(
+          response,
+          veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+          error.what());
+    case Kind::Conflict:
+      return StatusWithNotaryError(
+          response,
+          veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
+          error.what());
+    case Kind::NotFound:
+      return StatusWithNotaryError(
+          response,
+          veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+          error.what());
+    case Kind::Unavailable:
+      return StatusWithNotaryError(
+          response,
+          veritas::notary::v1::NOTARY_ERROR_CODE_TEMPORARILY_UNAVAILABLE,
+          error.what());
+    default:
+      return StatusWithNotaryError(
+          response,
+          veritas::notary::v1::NOTARY_ERROR_CODE_INTERNAL,
+          "shared store returned an unknown failure");
+  }
+}
+
 grpc::Status MapAuthzStatusToIssueStatus(
     const grpc::Status& status,
     veritas::notary::v1::IssueCertificateResponse* response) {
+  if (status.error_code() == grpc::StatusCode::PERMISSION_DENIED) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_TOKEN_REVOKED,
+        "refresh token is revoked");
+  }
+  if (status.error_code() == grpc::StatusCode::UNAVAILABLE) {
+    return StatusWithNotaryError(
+        response,
+        veritas::notary::v1::NOTARY_ERROR_CODE_TEMPORARILY_UNAVAILABLE,
+        "gatekeeper is unavailable");
+  }
+  if (status.error_code() == grpc::StatusCode::INVALID_ARGUMENT ||
+      status.error_code() == grpc::StatusCode::UNAUTHENTICATED) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_TOKEN_INVALID,
+        "refresh token is invalid");
+  }
+  return StatusWithNotaryError(
+      response, veritas::notary::v1::NOTARY_ERROR_CODE_UNAUTHORIZED,
+      "authorization failed");
+}
+
+grpc::Status MapAuthzStatusToRenewStatus(
+    const grpc::Status& status,
+    veritas::notary::v1::RenewCertificateResponse* response) {
   if (status.error_code() == grpc::StatusCode::PERMISSION_DENIED) {
     return StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_TOKEN_REVOKED,
@@ -163,6 +240,37 @@ grpc::Status ValidateIssueRequest(
         "idempotency_key is required");
   }
 
+  if (request.requested_ttl_seconds() < kMinIssueTtlSeconds) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "requested_ttl_seconds is below minimum policy bound");
+  }
+
+  const auto bounded_ttl = std::min(request.requested_ttl_seconds(),
+                                    kMaxIssueTtlSeconds);
+  *effective_ttl = std::chrono::seconds(bounded_ttl);
+  return grpc::Status::OK;
+}
+
+grpc::Status ValidateRenewRequest(
+    const veritas::notary::v1::RenewCertificateRequest& request,
+    veritas::notary::v1::RenewCertificateResponse* response,
+    std::chrono::seconds* effective_ttl) {
+  if (request.refresh_token().empty()) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "refresh_token is required");
+  }
+  if (request.certificate_serial().empty()) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "certificate_serial is required");
+  }
+  if (request.idempotency_key().empty()) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "idempotency_key is required");
+  }
   if (request.requested_ttl_seconds() < kMinIssueTtlSeconds) {
     return StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
@@ -306,6 +414,24 @@ grpc::Status NotaryServiceImpl::IssueCertificate(
   try {
     issuance_store_->PutIssuance(record);
   } catch (const veritas::shared::SharedStoreError& ex) {
+    if (ex.kind() == veritas::shared::SharedStoreError::Kind::Conflict) {
+      try {
+        const auto existing_serial =
+            issuance_store_->ResolveIdempotencyKey(request->idempotency_key());
+        if (existing_serial.has_value()) {
+          const auto existing_record =
+              issuance_store_->GetBySerial(*existing_serial);
+          if (existing_record.has_value() &&
+              existing_record->token_hash == token_hash) {
+            FillIssuedResponseFromRecord(*existing_record, response);
+            LogNotaryEvent("IssueCertificate", grpc::Status::OK,
+                           "idempotent_replay_after_conflict");
+            return grpc::Status::OK;
+          }
+        }
+      } catch (const veritas::shared::SharedStoreError&) {
+      }
+    }
     const auto status = MapStoreErrorToIssueStatus(ex, response);
     LogNotaryEvent("IssueCertificate", status, "issuance_store_failed");
     return status;
@@ -319,15 +445,182 @@ grpc::Status NotaryServiceImpl::IssueCertificate(
 grpc::Status NotaryServiceImpl::RenewCertificate(
     grpc::ServerContext* /*context*/,
     const veritas::notary::v1::RenewCertificateRequest* request,
-    veritas::notary::v1::RenewCertificateResponse* /*response*/) {
+    veritas::notary::v1::RenewCertificateResponse* response) {
+  std::chrono::seconds requested_ttl{};
+  const auto validation_status =
+      ValidateRenewRequest(*request, response, &requested_ttl);
+  if (!validation_status.ok()) {
+    LogNotaryEvent("RenewCertificate", validation_status, "validation_failed");
+    return validation_status;
+  }
+
   const auto authz = authorizer_->AuthorizeRefreshToken(request->refresh_token());
   if (!authz.ok()) {
-    LogNotaryEvent("RenewCertificate", authz, "authorization_failed");
-    return authz;
+    const auto mapped = MapAuthzStatusToRenewStatus(authz, response);
+    LogNotaryEvent("RenewCertificate", mapped, "authorization_failed");
+    return mapped;
   }
-  const auto status = IssuePipelinePlaceholderStatus();
-  LogNotaryEvent("RenewCertificate", status, "");
-  return status;
+
+  std::string token_hash;
+  try {
+    token_hash = HashTokenSha256(request->refresh_token());
+  } catch (const std::exception& ex) {
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INTERNAL, ex.what());
+    LogNotaryEvent("RenewCertificate", status, "token_hash_failed");
+    return status;
+  }
+
+  try {
+    const auto existing_serial =
+        issuance_store_->ResolveIdempotencyKey(request->idempotency_key());
+    if (existing_serial.has_value()) {
+      const auto existing_record = issuance_store_->GetBySerial(*existing_serial);
+      if (!existing_record.has_value()) {
+        const auto status = StatusWithNotaryError(
+            response, veritas::notary::v1::NOTARY_ERROR_CODE_INTERNAL,
+            "idempotency key references unknown issuance record");
+        LogNotaryEvent("RenewCertificate", status, "idempotency_dangling");
+        return status;
+      }
+      if (existing_record->token_hash != token_hash) {
+        const auto status = StatusWithNotaryError(
+            response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
+            "idempotency key is already bound to another token");
+        LogNotaryEvent("RenewCertificate", status, "idempotency_conflict");
+        return status;
+      }
+      FillRenewedResponseFromRecord(*existing_record, response);
+      LogNotaryEvent("RenewCertificate", grpc::Status::OK, "idempotent_replay");
+      return grpc::Status::OK;
+    }
+  } catch (const veritas::shared::SharedStoreError& ex) {
+    const auto status = MapStoreErrorToRenewStatus(ex, response);
+    LogNotaryEvent("RenewCertificate", status, "idempotency_lookup_failed");
+    return status;
+  }
+
+  std::optional<veritas::shared::IssuanceRecord> current_record;
+  try {
+    current_record = issuance_store_->GetBySerial(request->certificate_serial());
+  } catch (const veritas::shared::SharedStoreError& ex) {
+    const auto status = MapStoreErrorToRenewStatus(ex, response);
+    LogNotaryEvent("RenewCertificate", status, "issuance_lookup_failed");
+    return status;
+  }
+
+  if (!current_record.has_value()) {
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "certificate_serial does not exist");
+    LogNotaryEvent("RenewCertificate", status, "unknown_serial");
+    return status;
+  }
+  if (current_record->token_hash != token_hash) {
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
+        "certificate does not belong to this token");
+    LogNotaryEvent("RenewCertificate", status, "token_mismatch");
+    return status;
+  }
+  if (current_record->state == veritas::shared::IssuanceState::Revoked) {
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_TOKEN_REVOKED,
+        "certificate is revoked");
+    LogNotaryEvent("RenewCertificate", status, "certificate_revoked");
+    return status;
+  }
+
+  const auto now = std::chrono::system_clock::now();
+  if (current_record->expires_at <= now) {
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_TOKEN_EXPIRED,
+        "certificate is expired");
+    LogNotaryEvent("RenewCertificate", status, "certificate_expired");
+    return status;
+  }
+  if (current_record->expires_at > now + kRenewalOverlapWindow) {
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
+        "renewal request is outside overlap window");
+    LogNotaryEvent("RenewCertificate", status, "outside_overlap_window");
+    return status;
+  }
+
+  SigningResult signing_result;
+  try {
+    RenewalSigningRequest renewal_request;
+    renewal_request.certificate_pem = current_record->certificate_pem;
+    renewal_request.requested_ttl = requested_ttl;
+    signing_result = signer_->Renew(renewal_request);
+  } catch (const SignerIssueError& ex) {
+    grpc::Status status;
+    switch (ex.code()) {
+      case SignerIssueErrorCode::InvalidRequest:
+        status = StatusWithNotaryError(
+            response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+            ex.what());
+        break;
+      case SignerIssueErrorCode::PolicyDenied:
+        status = StatusWithNotaryError(
+            response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
+            ex.what());
+        break;
+      case SignerIssueErrorCode::Internal:
+      default:
+        status = StatusWithNotaryError(
+            response, veritas::notary::v1::NOTARY_ERROR_CODE_INTERNAL, ex.what());
+        break;
+    }
+    LogNotaryEvent("RenewCertificate", status, "signer_rejected");
+    return status;
+  } catch (const std::exception& ex) {
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INTERNAL, ex.what());
+    LogNotaryEvent("RenewCertificate", status, "signer_exception");
+    return status;
+  }
+
+  veritas::shared::IssuanceRecord renewed_record;
+  renewed_record.certificate_serial = signing_result.certificate_serial;
+  renewed_record.certificate_pem = signing_result.certificate_pem;
+  renewed_record.certificate_chain_pem = signing_result.certificate_chain_pem;
+  renewed_record.user_uuid = current_record->user_uuid;
+  renewed_record.token_hash = token_hash;
+  renewed_record.idempotency_key = request->idempotency_key();
+  renewed_record.issued_at = signing_result.not_before;
+  renewed_record.expires_at = signing_result.not_after;
+  renewed_record.state = veritas::shared::IssuanceState::Active;
+
+  try {
+    issuance_store_->PutIssuance(renewed_record);
+  } catch (const veritas::shared::SharedStoreError& ex) {
+    if (ex.kind() == veritas::shared::SharedStoreError::Kind::Conflict) {
+      try {
+        const auto existing_serial =
+            issuance_store_->ResolveIdempotencyKey(request->idempotency_key());
+        if (existing_serial.has_value()) {
+          const auto existing_record =
+              issuance_store_->GetBySerial(*existing_serial);
+          if (existing_record.has_value() &&
+              existing_record->token_hash == token_hash) {
+            FillRenewedResponseFromRecord(*existing_record, response);
+            LogNotaryEvent("RenewCertificate", grpc::Status::OK,
+                           "idempotent_replay_after_conflict");
+            return grpc::Status::OK;
+          }
+        }
+      } catch (const veritas::shared::SharedStoreError&) {
+      }
+    }
+    const auto status = MapStoreErrorToRenewStatus(ex, response);
+    LogNotaryEvent("RenewCertificate", status, "renew_store_failed");
+    return status;
+  }
+
+  FillRenewedResponseFromRecord(renewed_record, response);
+  LogNotaryEvent("RenewCertificate", grpc::Status::OK, "renewed");
+  return grpc::Status::OK;
 }
 
 grpc::Status NotaryServiceImpl::RevokeCertificate(

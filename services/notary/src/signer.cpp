@@ -106,6 +106,24 @@ std::unique_ptr<EVP_PKEY, PkeyDeleter> LoadIssuerPrivateKey(
   return key;
 }
 
+std::unique_ptr<X509, X509Deleter> ParseCertificatePem(
+    const std::string& certificate_pem) {
+  std::unique_ptr<BIO, BioDeleter> bio(
+      BIO_new_mem_buf(certificate_pem.data(),
+                      static_cast<int>(certificate_pem.size())));
+  if (!bio) {
+    throw SignerIssueError(SignerIssueErrorCode::InvalidRequest,
+                           "invalid certificate PEM buffer");
+  }
+  std::unique_ptr<X509, X509Deleter> cert(
+      PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr));
+  if (!cert) {
+    throw SignerIssueError(SignerIssueErrorCode::InvalidRequest,
+                           "failed to parse certificate PEM");
+  }
+  return cert;
+}
+
 std::chrono::seconds ClampRequestedTtl(std::chrono::seconds requested_ttl) {
   if (requested_ttl < kMinimumTtl) {
     throw SignerIssueError(SignerIssueErrorCode::InvalidRequest,
@@ -213,15 +231,55 @@ void ValidateSubjectAltNamePolicy(X509_REQ* csr) {
   }
 }
 
-void ValidateKeyPolicy(X509_REQ* csr) {
-  std::unique_ptr<EVP_PKEY, PkeyDeleter> pubkey(X509_REQ_get_pubkey(csr));
-  if (!pubkey) {
-    throw SignerIssueError(SignerIssueErrorCode::InvalidRequest,
-                           "CSR public key is missing");
+void ValidateSubjectAltNamePolicy(X509* certificate) {
+  std::unique_ptr<GENERAL_NAMES, GeneralNamesDeleter> names(
+      static_cast<GENERAL_NAMES*>(
+          X509_get_ext_d2i(certificate, NID_subject_alt_name, nullptr, nullptr)));
+  if (!names) {
+    throw SignerIssueError(SignerIssueErrorCode::PolicyDenied,
+                           "certificate SAN extension is required");
   }
 
-  const int key_type = EVP_PKEY_base_id(pubkey.get());
-  const int key_bits = EVP_PKEY_bits(pubkey.get());
+  std::vector<std::string> dns_names;
+  const int name_count = sk_GENERAL_NAME_num(names.get());
+  if (name_count == 0) {
+    throw SignerIssueError(SignerIssueErrorCode::PolicyDenied,
+                           "certificate SAN extension cannot be empty");
+  }
+  for (int n = 0; n < name_count; ++n) {
+    GENERAL_NAME* name = sk_GENERAL_NAME_value(names.get(), n);
+    if (name->type == GEN_DNS) {
+      const auto* dns = name->d.dNSName;
+      dns_names.emplace_back(
+          reinterpret_cast<const char*>(ASN1_STRING_get0_data(dns)),
+          static_cast<size_t>(ASN1_STRING_length(dns)));
+    } else if (name->type == GEN_IPADD) {
+      continue;
+    } else {
+      throw SignerIssueError(
+          SignerIssueErrorCode::PolicyDenied,
+          "unsupported SAN type in certificate (only DNS/IP are allowed)");
+    }
+  }
+
+  const auto common_name =
+      ExtractCommonName(X509_get_subject_name(certificate));
+  if (common_name.has_value() && !dns_names.empty() &&
+      std::find(dns_names.begin(), dns_names.end(), *common_name) ==
+          dns_names.end()) {
+    throw SignerIssueError(SignerIssueErrorCode::PolicyDenied,
+                           "subject CN must match one of DNS SAN entries");
+  }
+}
+
+void ValidateKeyPolicy(EVP_PKEY* pubkey, const char* error_context) {
+  if (!pubkey) {
+    throw SignerIssueError(SignerIssueErrorCode::InvalidRequest,
+                           std::string(error_context) + " public key is missing");
+  }
+
+  const int key_type = EVP_PKEY_base_id(pubkey);
+  const int key_bits = EVP_PKEY_bits(pubkey);
   if (key_type == EVP_PKEY_RSA) {
     if (key_bits < 2048) {
       throw SignerIssueError(SignerIssueErrorCode::PolicyDenied,
@@ -237,7 +295,17 @@ void ValidateKeyPolicy(X509_REQ* csr) {
     return;
   }
   throw SignerIssueError(SignerIssueErrorCode::PolicyDenied,
-                         "unsupported CSR key type");
+                         "unsupported key type");
+}
+
+void ValidateKeyPolicy(X509_REQ* csr) {
+  std::unique_ptr<EVP_PKEY, PkeyDeleter> pubkey(X509_REQ_get_pubkey(csr));
+  ValidateKeyPolicy(pubkey.get(), "CSR");
+}
+
+void ValidateKeyPolicy(X509* certificate) {
+  std::unique_ptr<EVP_PKEY, PkeyDeleter> pubkey(X509_get_pubkey(certificate));
+  ValidateKeyPolicy(pubkey.get(), "certificate");
 }
 
 void AddExtension(X509* certificate, X509* issuer, int nid,
@@ -290,6 +358,33 @@ void CopySanExtensionFromCsr(X509_REQ* csr, X509* certificate) {
   if (!copied) {
     throw SignerIssueError(SignerIssueErrorCode::PolicyDenied,
                            "CSR SAN extension is required");
+  }
+}
+
+void CopySanExtensionFromCertificate(X509* source, X509* certificate) {
+  bool copied = false;
+  const int ext_count = X509_get_ext_count(source);
+  for (int i = 0; i < ext_count; ++i) {
+    X509_EXTENSION* ext = X509_get_ext(source, i);
+    if (OBJ_obj2nid(X509_EXTENSION_get_object(ext)) != NID_subject_alt_name) {
+      continue;
+    }
+    X509_EXTENSION* duplicate = X509_EXTENSION_dup(ext);
+    if (!duplicate) {
+      throw SignerIssueError(SignerIssueErrorCode::Internal,
+                             "failed to duplicate SAN extension");
+    }
+    if (X509_add_ext(certificate, duplicate, -1) != 1) {
+      X509_EXTENSION_free(duplicate);
+      throw SignerIssueError(SignerIssueErrorCode::Internal,
+                             "failed to copy SAN extension to certificate");
+    }
+    X509_EXTENSION_free(duplicate);
+    copied = true;
+  }
+  if (!copied) {
+    throw SignerIssueError(SignerIssueErrorCode::PolicyDenied,
+                           "certificate SAN extension is required");
   }
 }
 
@@ -462,6 +557,82 @@ SigningResult OpenSslSigner::Issue(const SigningRequest& request) {
   SigningResult result;
   result.certificate_serial = serial;
   result.certificate_pem = X509ToPem(leaf.get());
+  if (!config_.issuer_chain_path.empty()) {
+    result.certificate_chain_pem = ReadTextFile(config_.issuer_chain_path);
+  }
+  result.not_before = not_before;
+  result.not_after = not_after;
+  return result;
+}
+
+SigningResult OpenSslSigner::Renew(const RenewalSigningRequest& request) {
+  if (request.certificate_pem.empty()) {
+    throw SignerIssueError(SignerIssueErrorCode::InvalidRequest,
+                           "certificate_pem is required for renewal");
+  }
+
+  const auto ttl = ClampRequestedTtl(request.requested_ttl);
+  auto issuer_cert = LoadIssuerCertificate(config_.issuer_cert_path);
+  auto issuer_key = LoadIssuerPrivateKey(config_.issuer_key_path);
+  auto current_leaf = ParseCertificatePem(request.certificate_pem);
+
+  ValidateSubjectAltNamePolicy(current_leaf.get());
+  ValidateKeyPolicy(current_leaf.get());
+
+  std::unique_ptr<X509, X509Deleter> renewed_leaf(X509_new());
+  if (!renewed_leaf) {
+    throw SignerIssueError(SignerIssueErrorCode::Internal,
+                           "failed to allocate renewed certificate");
+  }
+  if (X509_set_version(renewed_leaf.get(), 2) != 1) {
+    throw SignerIssueError(SignerIssueErrorCode::Internal,
+                           "failed to set certificate version");
+  }
+
+  const std::string serial = GenerateAndSetSerial(renewed_leaf.get());
+  if (X509_set_issuer_name(renewed_leaf.get(),
+                           X509_get_subject_name(issuer_cert.get())) != 1 ||
+      X509_set_subject_name(renewed_leaf.get(),
+                            X509_get_subject_name(current_leaf.get())) != 1) {
+    throw SignerIssueError(SignerIssueErrorCode::Internal,
+                           "failed to set renewal certificate names");
+  }
+
+  std::unique_ptr<EVP_PKEY, PkeyDeleter> subject_key(
+      X509_get_pubkey(current_leaf.get()));
+  if (!subject_key ||
+      X509_set_pubkey(renewed_leaf.get(), subject_key.get()) != 1) {
+    throw SignerIssueError(SignerIssueErrorCode::InvalidRequest,
+                           "failed to extract certificate public key");
+  }
+
+  const auto now = std::chrono::system_clock::now();
+  const auto not_before = now - kNotBeforeSkew;
+  const auto not_after = now + ttl;
+  if (!X509_gmtime_adj(X509_getm_notBefore(renewed_leaf.get()),
+                       -static_cast<long>(kNotBeforeSkew.count())) ||
+      !X509_gmtime_adj(X509_getm_notAfter(renewed_leaf.get()),
+                       static_cast<long>(ttl.count()))) {
+    throw SignerIssueError(SignerIssueErrorCode::Internal,
+                           "failed to set renewal certificate validity");
+  }
+
+  AddExtension(renewed_leaf.get(), issuer_cert.get(), NID_basic_constraints,
+               "critical,CA:FALSE");
+  AddExtension(renewed_leaf.get(), issuer_cert.get(), NID_key_usage,
+               "critical,digitalSignature,keyEncipherment");
+  AddExtension(renewed_leaf.get(), issuer_cert.get(), NID_ext_key_usage,
+               "clientAuth,serverAuth");
+  CopySanExtensionFromCertificate(current_leaf.get(), renewed_leaf.get());
+
+  if (X509_sign(renewed_leaf.get(), issuer_key.get(), EVP_sha256()) <= 0) {
+    throw SignerIssueError(SignerIssueErrorCode::Internal,
+                           "failed to sign renewed certificate");
+  }
+
+  SigningResult result;
+  result.certificate_serial = serial;
+  result.certificate_pem = X509ToPem(renewed_leaf.get());
   if (!config_.issuer_chain_path.empty()) {
     result.certificate_chain_pem = ReadTextFile(config_.issuer_chain_path);
   }

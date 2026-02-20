@@ -59,13 +59,6 @@ class InMemoryIssuanceStore final : public IssuanceStore {
     ValidateIssuanceRecord(record);
     std::lock_guard<std::mutex> lock(mutex_);
 
-    const auto token_it = serial_by_token_hash_.find(record.token_hash);
-    if (token_it != serial_by_token_hash_.end() &&
-        token_it->second != record.certificate_serial) {
-      throw SharedStoreError(SharedStoreError::Kind::Conflict,
-                             "token hash already linked to another serial");
-    }
-
     records_by_serial_[record.certificate_serial] = record;
     serial_by_token_hash_[record.token_hash] = record.certificate_serial;
     if (!record.idempotency_key.empty()) {
@@ -175,14 +168,6 @@ class RedisIssuanceStore final : public IssuanceStore {
   void PutIssuance(const IssuanceRecord& record) override {
     ValidateIssuanceRecord(record);
     try {
-      const auto token_key = TokenIndexKey(record.token_hash);
-      const auto token_existing = redis_.get(token_key);
-      if (token_existing.has_value() &&
-          *token_existing != record.certificate_serial) {
-        throw SharedStoreError(SharedStoreError::Kind::Conflict,
-                               "token hash already linked to another serial");
-      }
-
       if (!record.idempotency_key.empty() &&
           !RegisterIdempotencyKey(record.idempotency_key,
                                   record.certificate_serial)) {
@@ -203,7 +188,7 @@ class RedisIssuanceStore final : public IssuanceStore {
       fields.emplace("revoked_at", std::to_string(ToUnixSeconds(record.revoked_at)));
       redis_.hset(IssuanceKey(record.certificate_serial), fields.begin(),
                   fields.end());
-      redis_.set(token_key, record.certificate_serial);
+      redis_.set(TokenIndexKey(record.token_hash), record.certificate_serial);
     } catch (const SharedStoreError&) {
       throw;
     } catch (const sw::redis::Error& ex) {

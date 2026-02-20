@@ -53,6 +53,11 @@ struct SigningRequest {
   std::chrono::seconds requested_ttl{};
 };
 
+struct RenewalSigningRequest {
+  std::string certificate_pem;
+  std::chrono::seconds requested_ttl{};
+};
+
 struct SigningResult {
   std::string certificate_pem;
   std::string certificate_chain_pem;
@@ -66,6 +71,7 @@ class Signer {
   virtual ~Signer() = default;
 
   virtual SigningResult Issue(const SigningRequest& request) = 0;
+  virtual SigningResult Renew(const RenewalSigningRequest& request) = 0;
 };
 
 void ValidateSignerKeyMaterial(const SignerConfig& config);
@@ -77,6 +83,7 @@ class OpenSslSigner final : public Signer {
   const SignerConfig& config() const noexcept;
 
   SigningResult Issue(const SigningRequest& request) override;
+  SigningResult Renew(const RenewalSigningRequest& request) override;
 
  private:
   SignerConfig config_;
