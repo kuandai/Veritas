@@ -17,9 +17,10 @@ authenticated authorization context.
       persists issuance/idempotency data, and returns leaf + chain material.
     - `RenewCertificate` enforces request validation + authz, overlap-window
       policy, signer renewal, and idempotent persistence semantics.
-    - `RevokeCertificate` currently enforces authz then returns explicit
-      placeholder status.
-    - `GetCertificateStatus` currently returns placeholder status.
+    - `RevokeCertificate` enforces request validation + authz + ownership and
+      persists revocation reason/actor/timestamp metadata.
+    - `GetCertificateStatus` returns active/revoked/expired/unknown lifecycle
+      state from persisted issuance records.
   - `log_utils.*`: JSON-structured event logging for startup/RPC events.
   - `tls_utils.*`: startup TLS cert/key format and match validation.
 - Sprint 1 contract freeze is defined in `protocol/notary.proto`:
@@ -62,11 +63,16 @@ authenticated authorization context.
   - active/non-revoked record required,
   - token-hash ownership match required,
   - idempotency replay on duplicate renewal key.
+- Revocation/status behavior:
+  - revoke requires `reason` and `actor`,
+  - repeated revoke returns deterministic already-revoked error,
+  - status lookup returns state + validity window + revocation metadata.
 
 ## Placeholders / incomplete
 
-- Revocation/status lifecycle handlers are placeholders.
-- Revocation and status-plane read paths are not implemented.
+- Revocation reason taxonomy enforcement is not yet normalized beyond required
+  non-empty `reason` + `actor` fields.
+- Status API currently has no caller-auth policy gate.
 
 ## Aspirational
 

@@ -169,22 +169,33 @@ Implemented
   - active/non-revoked ownership checks via token-hash linkage,
   - signer renewal invocation + persisted renewed record response,
   - idempotent replay for duplicate key and conflict-after-write retry path.
+- `RevokeCertificate` implementation is wired:
+  - deterministic request validation (token, serial, reason, actor),
+  - authz + ownership checks,
+  - revocation persistence with reason/actor/timestamp metadata,
+  - deterministic already-revoked response mapping.
+- `GetCertificateStatus` implementation is wired:
+  - serial lookup against shared issuance store,
+  - lifecycle mapping to active/revoked/expired/unknown states,
+  - revocation reason/timestamp return for revoked records.
 - Structured JSON event logging is available for startup and RPC-path events.
 - Unit/integration tests cover:
   - config validation and read-file behavior,
   - Gatekeeper token-status authorizer mapping and gRPC path,
-  - issue + renew authz/validation/idempotency/retry paths,
+  - issue + renew + revoke authz/validation/idempotency/retry paths,
+  - lifecycle status-state mapping (active/revoked/expired/unknown),
   - signer validation + issuance + renewal policy paths,
   - startup success with health-service availability,
   - fail-closed startup on invalid signer material,
-  - shared issuance store record/idempotency/revocation behavior.
+  - shared issuance store record/idempotency/revocation behavior including
+    revocation actor metadata.
 
 Placeholders / incomplete
-- `RevokeCertificate` still returns `FAILED_PRECONDITION` after successful authz.
-- `GetCertificateStatus` remains a placeholder handler.
+- Revocation reason taxonomy is not enforced beyond non-empty fields.
+- Status API does not currently enforce caller authz policy.
 
 Aspirational
-- Full revocation/status lifecycle implementation.
+- Revocation/status API policy hardening and richer query/filter capabilities.
 
 ### services/gatekeeper (SASL service)
 
