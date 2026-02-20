@@ -15,6 +15,8 @@ IssuanceRecord MakeRecord(std::string serial,
                           std::string idempotency_key = "idem") {
   IssuanceRecord record;
   record.certificate_serial = std::move(serial);
+  record.certificate_pem = "leaf-cert";
+  record.certificate_chain_pem = "intermediate-chain";
   record.user_uuid = "user-1";
   record.token_hash = std::move(token_hash);
   record.idempotency_key = std::move(idempotency_key);

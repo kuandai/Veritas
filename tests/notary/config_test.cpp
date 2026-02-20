@@ -80,7 +80,8 @@ TEST(NotaryConfigTest, RequiresSignerKeyMaterialPaths) {
 TEST(NotaryConfigTest, LoadsValidConfiguration) {
   RequiredEnv env;
   ScopedEnv require_client("NOTARY_TLS_REQUIRE_CLIENT_CERT", "false");
-  EXPECT_NO_THROW(LoadConfig());
+  const auto config = LoadConfig();
+  EXPECT_EQ(config.store_backend, NotaryStoreBackend::InMemory);
 }
 
 TEST(NotaryConfigTest, SecureGatekeeperModeRequiresCaBundle) {
@@ -104,6 +105,22 @@ TEST(NotaryConfigTest, ReadFileReturnsContents) {
 TEST(NotaryConfigTest, ReadFileMissingThrows) {
   const auto missing = TempPath("veritas_notary_missing");
   EXPECT_THROW(ReadFile(missing), std::runtime_error);
+}
+
+TEST(NotaryConfigTest, RedisStoreBackendRequiresUri) {
+  RequiredEnv env;
+  ScopedEnv store_backend("NOTARY_STORE_BACKEND", "redis");
+  ScopedEnv store_uri("NOTARY_STORE_URI", nullptr);
+  EXPECT_THROW(LoadConfig(), std::runtime_error);
+}
+
+TEST(NotaryConfigTest, LoadsRedisStoreBackendWhenUriProvided) {
+  RequiredEnv env;
+  ScopedEnv store_backend("NOTARY_STORE_BACKEND", "redis");
+  ScopedEnv store_uri("NOTARY_STORE_URI", "redis://127.0.0.1:6379");
+  const auto config = LoadConfig();
+  EXPECT_EQ(config.store_backend, NotaryStoreBackend::Redis);
+  EXPECT_EQ(config.store_uri, "redis://127.0.0.1:6379");
 }
 
 }  // namespace veritas::notary

@@ -15,6 +15,7 @@
 
 #include "authorizer.h"
 #include "notary_service.h"
+#include "veritas/shared/issuance_store.h"
 
 namespace veritas::notary {
 namespace {
@@ -142,6 +143,18 @@ class AllowAuthorizer final : public RequestAuthorizer {
   }
 };
 
+class DummySigner final : public Signer {
+ public:
+  SigningResult Issue(const SigningRequest& /*request*/) override {
+    SigningResult result;
+    result.certificate_serial = "unused";
+    result.certificate_pem = "unused";
+    result.not_before = std::chrono::system_clock::now();
+    result.not_after = result.not_before + std::chrono::minutes(5);
+    return result;
+  }
+};
+
 TEST(NotaryServerIntegrationTest, StartsWithTlsAndEnablesHealthService) {
   TempDir temp;
   const auto server_pair = GenerateSelfSigned("veritas-notary-server");
@@ -164,7 +177,11 @@ TEST(NotaryServerIntegrationTest, StartsWithTlsAndEnablesHealthService) {
   config.signer_key_path = signer_key.string();
 
   auto authorizer = std::make_shared<AllowAuthorizer>();
-  NotaryServiceImpl service(authorizer);
+  auto signer = std::make_shared<DummySigner>();
+  veritas::shared::SharedStoreConfig store_config;
+  store_config.backend = veritas::shared::SharedStoreBackend::InMemory;
+  auto store = veritas::shared::CreateIssuanceStore(store_config);
+  NotaryServiceImpl service(authorizer, signer, store);
   auto runtime = StartNotaryServer(config, &service);
   ASSERT_TRUE(runtime.server != nullptr);
   ASSERT_EQ(runtime.bound_addr.find(":0"), std::string::npos)
@@ -195,7 +212,11 @@ TEST(NotaryServerIntegrationTest, StartupFailsClosedOnInvalidSignerMaterial) {
   config.signer_key_path = signer_key.string();
 
   auto authorizer = std::make_shared<AllowAuthorizer>();
-  NotaryServiceImpl service(authorizer);
+  auto signer = std::make_shared<DummySigner>();
+  veritas::shared::SharedStoreConfig store_config;
+  store_config.backend = veritas::shared::SharedStoreBackend::InMemory;
+  auto store = veritas::shared::CreateIssuanceStore(store_config);
+  NotaryServiceImpl service(authorizer, signer, store);
   EXPECT_THROW(static_cast<void>(StartNotaryServer(config, &service)),
                std::runtime_error);
 }

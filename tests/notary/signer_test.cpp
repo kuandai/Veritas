@@ -5,12 +5,14 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
 #include <openssl/buffer.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 
 namespace veritas::notary {
 namespace {
@@ -31,6 +33,10 @@ struct X509Deleter {
   void operator()(X509* cert) const { X509_free(cert); }
 };
 
+struct X509ReqDeleter {
+  void operator()(X509_REQ* req) const { X509_REQ_free(req); }
+};
+
 struct KeyCertPair {
   std::string key_pem;
   std::string cert_pem;
@@ -45,7 +51,7 @@ std::string BioToString(BIO* bio) {
   return std::string(mem->data, mem->length);
 }
 
-std::unique_ptr<EVP_PKEY, PkeyDeleter> GenerateKey() {
+std::unique_ptr<EVP_PKEY, PkeyDeleter> GenerateRsaKey(int bits) {
   std::unique_ptr<EVP_PKEY_CTX, PkeyCtxDeleter> ctx(
       EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr));
   if (!ctx) {
@@ -54,7 +60,7 @@ std::unique_ptr<EVP_PKEY, PkeyDeleter> GenerateKey() {
   if (EVP_PKEY_keygen_init(ctx.get()) <= 0) {
     throw std::runtime_error("Failed to init keygen");
   }
-  if (EVP_PKEY_CTX_set_rsa_keygen_bits(ctx.get(), 2048) <= 0) {
+  if (EVP_PKEY_CTX_set_rsa_keygen_bits(ctx.get(), bits) <= 0) {
     throw std::runtime_error("Failed to set key size");
   }
   EVP_PKEY* pkey = nullptr;
@@ -64,8 +70,8 @@ std::unique_ptr<EVP_PKEY, PkeyDeleter> GenerateKey() {
   return std::unique_ptr<EVP_PKEY, PkeyDeleter>(pkey);
 }
 
-KeyCertPair GenerateSelfSigned() {
-  auto key = GenerateKey();
+KeyCertPair GenerateSelfSignedIssuer() {
+  auto key = GenerateRsaKey(2048);
   std::unique_ptr<X509, X509Deleter> cert(X509_new());
   if (!cert) {
     throw std::runtime_error("Failed to allocate X509");
@@ -77,12 +83,12 @@ KeyCertPair GenerateSelfSigned() {
   X509_set_pubkey(cert.get(), key.get());
 
   X509_NAME* name = X509_get_subject_name(cert.get());
-  const unsigned char cn[] = "veritas-notary-test";
+  const unsigned char cn[] = "veritas-notary-test-issuer";
   X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, cn, -1, -1, 0);
   X509_set_issuer_name(cert.get(), name);
 
   if (X509_sign(cert.get(), key.get(), EVP_sha256()) <= 0) {
-    throw std::runtime_error("Failed to sign certificate");
+    throw std::runtime_error("Failed to sign issuer certificate");
   }
 
   std::unique_ptr<BIO, BioDeleter> key_bio(BIO_new(BIO_s_mem()));
@@ -92,13 +98,97 @@ KeyCertPair GenerateSelfSigned() {
   }
   if (PEM_write_bio_PrivateKey(key_bio.get(), key.get(), nullptr, nullptr, 0,
                                nullptr, nullptr) != 1) {
-    throw std::runtime_error("Failed to write private key");
+    throw std::runtime_error("Failed to write issuer private key");
   }
   if (PEM_write_bio_X509(cert_bio.get(), cert.get()) != 1) {
-    throw std::runtime_error("Failed to write certificate");
+    throw std::runtime_error("Failed to write issuer certificate");
   }
 
   return KeyCertPair{BioToString(key_bio.get()), BioToString(cert_bio.get())};
+}
+
+std::string JoinSanSpec(const std::vector<std::string>& dns_names,
+                        bool include_email) {
+  std::string spec;
+  for (const auto& dns_name : dns_names) {
+    if (!spec.empty()) {
+      spec += ",";
+    }
+    spec += "DNS:";
+    spec += dns_name;
+  }
+  if (include_email) {
+    if (!spec.empty()) {
+      spec += ",";
+    }
+    spec += "email:security@example.com";
+  }
+  return spec;
+}
+
+std::string GenerateCsrDer(const std::string& common_name,
+                           const std::vector<std::string>& dns_names,
+                           int key_bits = 2048,
+                           bool include_email = false) {
+  auto key = GenerateRsaKey(key_bits);
+  std::unique_ptr<X509_REQ, X509ReqDeleter> req(X509_REQ_new());
+  if (!req) {
+    throw std::runtime_error("Failed to allocate CSR");
+  }
+
+  if (X509_REQ_set_version(req.get(), 0L) != 1) {
+    throw std::runtime_error("Failed to set CSR version");
+  }
+  X509_NAME* subject_name = X509_REQ_get_subject_name(req.get());
+  if (!common_name.empty()) {
+    X509_NAME_add_entry_by_txt(
+        subject_name, "CN", MBSTRING_ASC,
+        reinterpret_cast<const unsigned char*>(common_name.c_str()), -1, -1, 0);
+  }
+  if (X509_REQ_set_pubkey(req.get(), key.get()) != 1) {
+    throw std::runtime_error("Failed to set CSR public key");
+  }
+
+  const auto san_spec = JoinSanSpec(dns_names, include_email);
+  if (!san_spec.empty()) {
+    X509_EXTENSION* san_ext = X509V3_EXT_conf_nid(
+        nullptr, nullptr, NID_subject_alt_name,
+        const_cast<char*>(san_spec.c_str()));
+    if (!san_ext) {
+      throw std::runtime_error("Failed to create SAN extension");
+    }
+    STACK_OF(X509_EXTENSION)* exts = sk_X509_EXTENSION_new_null();
+    if (!exts || sk_X509_EXTENSION_push(exts, san_ext) != 1) {
+      if (exts) {
+        sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+      } else {
+        X509_EXTENSION_free(san_ext);
+      }
+      throw std::runtime_error("Failed to build CSR extension stack");
+    }
+    if (X509_REQ_add_extensions(req.get(), exts) != 1) {
+      sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+      throw std::runtime_error("Failed to add CSR extensions");
+    }
+    sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+  }
+
+  if (X509_REQ_sign(req.get(), key.get(), EVP_sha256()) <= 0) {
+    throw std::runtime_error("Failed to sign CSR");
+  }
+
+  const int der_length = i2d_X509_REQ(req.get(), nullptr);
+  if (der_length <= 0) {
+    throw std::runtime_error("Failed to get CSR DER length");
+  }
+
+  std::string der(static_cast<size_t>(der_length), '\0');
+  unsigned char* out =
+      reinterpret_cast<unsigned char*>(der.data());
+  if (i2d_X509_REQ(req.get(), &out) <= 0) {
+    throw std::runtime_error("Failed to encode CSR DER");
+  }
+  return der;
 }
 
 class TempDir {
@@ -112,7 +202,10 @@ class TempDir {
     std::filesystem::create_directories(path_);
   }
 
-  ~TempDir() { std::error_code ec; std::filesystem::remove_all(path_, ec); }
+  ~TempDir() {
+    std::error_code ec;
+    std::filesystem::remove_all(path_, ec);
+  }
 
   const std::filesystem::path& path() const { return path_; }
 
@@ -128,10 +221,8 @@ void WriteFile(const std::filesystem::path& path, const std::string& data) {
   out << data;
 }
 
-TEST(SignerTest, ValidateSignerKeyMaterialAcceptsMatchingPair) {
-  TempDir temp;
-  const auto pair = GenerateSelfSigned();
-
+SignerConfig BuildSignerConfig(const TempDir& temp, const KeyCertPair& pair,
+                               bool with_chain = false) {
   const auto cert_path = temp.path() / "issuer.crt";
   const auto key_path = temp.path() / "issuer.key";
   WriteFile(cert_path, pair.cert_pem);
@@ -140,6 +231,18 @@ TEST(SignerTest, ValidateSignerKeyMaterialAcceptsMatchingPair) {
   SignerConfig config;
   config.issuer_cert_path = cert_path.string();
   config.issuer_key_path = key_path.string();
+  if (with_chain) {
+    const auto chain_path = temp.path() / "issuer-chain.pem";
+    WriteFile(chain_path, "-----BEGIN CERTIFICATE-----\nintermediate\n-----END CERTIFICATE-----\n");
+    config.issuer_chain_path = chain_path.string();
+  }
+  return config;
+}
+
+TEST(SignerTest, ValidateSignerKeyMaterialAcceptsMatchingPair) {
+  TempDir temp;
+  const auto pair = GenerateSelfSignedIssuer();
+  const auto config = BuildSignerConfig(temp, pair);
   EXPECT_NO_THROW(ValidateSignerKeyMaterial(config));
 }
 
@@ -163,8 +266,8 @@ TEST(SignerTest, ValidateSignerKeyMaterialRejectsInvalidPem) {
 
 TEST(SignerTest, ValidateSignerKeyMaterialRejectsMismatchedKey) {
   TempDir temp;
-  const auto pair_one = GenerateSelfSigned();
-  const auto pair_two = GenerateSelfSigned();
+  const auto pair_one = GenerateSelfSignedIssuer();
+  const auto pair_two = GenerateSelfSignedIssuer();
 
   const auto cert_path = temp.path() / "issuer.crt";
   const auto key_path = temp.path() / "issuer.key";
@@ -195,23 +298,117 @@ TEST(SignerTest, OpenSslSignerConstructorValidatesMaterial) {
       SignerConfigError);
 }
 
-TEST(SignerTest, OpenSslSignerIssueIsExplicitPlaceholder) {
+TEST(SignerTest, OpenSslSignerIssuesCertificateAndReturnsChain) {
   TempDir temp;
-  const auto pair = GenerateSelfSigned();
-
-  const auto cert_path = temp.path() / "issuer.crt";
-  const auto key_path = temp.path() / "issuer.key";
-  WriteFile(cert_path, pair.cert_pem);
-  WriteFile(key_path, pair.key_pem);
-
-  SignerConfig config;
-  config.issuer_cert_path = cert_path.string();
-  config.issuer_key_path = key_path.string();
+  const auto issuer_pair = GenerateSelfSignedIssuer();
+  const auto config = BuildSignerConfig(temp, issuer_pair, true);
   OpenSslSigner signer(config);
 
   SigningRequest request;
+  request.csr_der = GenerateCsrDer(
+      "svc.example.internal",
+      {"svc.example.internal", "svc-alt.example.internal"});
   request.requested_ttl = std::chrono::minutes(30);
-  EXPECT_THROW(static_cast<void>(signer.Issue(request)), std::runtime_error);
+
+  const auto result = signer.Issue(request);
+  EXPECT_FALSE(result.certificate_serial.empty());
+  EXPECT_FALSE(result.certificate_pem.empty());
+  EXPECT_FALSE(result.certificate_chain_pem.empty());
+  EXPECT_LT(result.not_before, result.not_after);
+}
+
+TEST(SignerTest, OpenSslSignerRejectsMalformedCsr) {
+  TempDir temp;
+  const auto issuer_pair = GenerateSelfSignedIssuer();
+  const auto config = BuildSignerConfig(temp, issuer_pair);
+  OpenSslSigner signer(config);
+
+  SigningRequest request;
+  request.csr_der = "not-der";
+  request.requested_ttl = std::chrono::minutes(10);
+
+  try {
+    static_cast<void>(signer.Issue(request));
+    FAIL() << "expected SignerIssueError";
+  } catch (const SignerIssueError& ex) {
+    EXPECT_EQ(ex.code(), SignerIssueErrorCode::InvalidRequest);
+  }
+}
+
+TEST(SignerTest, OpenSslSignerRejectsMissingSan) {
+  TempDir temp;
+  const auto issuer_pair = GenerateSelfSignedIssuer();
+  const auto config = BuildSignerConfig(temp, issuer_pair);
+  OpenSslSigner signer(config);
+
+  SigningRequest request;
+  request.csr_der = GenerateCsrDer("svc.example.internal", {});
+  request.requested_ttl = std::chrono::minutes(10);
+
+  try {
+    static_cast<void>(signer.Issue(request));
+    FAIL() << "expected SignerIssueError";
+  } catch (const SignerIssueError& ex) {
+    EXPECT_EQ(ex.code(), SignerIssueErrorCode::PolicyDenied);
+  }
+}
+
+TEST(SignerTest, OpenSslSignerRejectsUnsupportedSanType) {
+  TempDir temp;
+  const auto issuer_pair = GenerateSelfSignedIssuer();
+  const auto config = BuildSignerConfig(temp, issuer_pair);
+  OpenSslSigner signer(config);
+
+  SigningRequest request;
+  request.csr_der =
+      GenerateCsrDer("svc.example.internal", {"svc.example.internal"}, 2048, true);
+  request.requested_ttl = std::chrono::minutes(10);
+
+  try {
+    static_cast<void>(signer.Issue(request));
+    FAIL() << "expected SignerIssueError";
+  } catch (const SignerIssueError& ex) {
+    EXPECT_EQ(ex.code(), SignerIssueErrorCode::PolicyDenied);
+  }
+}
+
+TEST(SignerTest, OpenSslSignerRejectsWeakRsaKey) {
+  TempDir temp;
+  const auto issuer_pair = GenerateSelfSignedIssuer();
+  const auto config = BuildSignerConfig(temp, issuer_pair);
+  OpenSslSigner signer(config);
+
+  SigningRequest request;
+  request.csr_der = GenerateCsrDer("svc.example.internal",
+                                   {"svc.example.internal"}, 1024, false);
+  request.requested_ttl = std::chrono::minutes(10);
+
+  try {
+    static_cast<void>(signer.Issue(request));
+    FAIL() << "expected SignerIssueError";
+  } catch (const SignerIssueError& ex) {
+    EXPECT_EQ(ex.code(), SignerIssueErrorCode::PolicyDenied);
+  }
+}
+
+TEST(SignerTest, OpenSslSignerClampsTtlToPolicyMaximum) {
+  TempDir temp;
+  const auto issuer_pair = GenerateSelfSignedIssuer();
+  const auto config = BuildSignerConfig(temp, issuer_pair);
+  OpenSslSigner signer(config);
+
+  SigningRequest request;
+  request.csr_der = GenerateCsrDer("svc.example.internal",
+                                   {"svc.example.internal"});
+  request.requested_ttl = std::chrono::hours(48);
+
+  const auto result = signer.Issue(request);
+  const auto actual_window = std::chrono::duration_cast<std::chrono::seconds>(
+      result.not_after - result.not_before);
+  const auto max_window =
+      std::chrono::duration_cast<std::chrono::seconds>(std::chrono::hours(24)) +
+      std::chrono::seconds(60);
+  EXPECT_LE(actual_window.count(), max_window.count());
 }
 
 }  // namespace
