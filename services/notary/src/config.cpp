@@ -47,6 +47,10 @@ NotaryConfig LoadConfig() {
   config.signer_cert_path = GetEnvOrEmpty("NOTARY_SIGNER_CERT");
   config.signer_key_path = GetEnvOrEmpty("NOTARY_SIGNER_KEY");
   config.signer_chain_path = GetEnvOrEmpty("NOTARY_SIGNER_CHAIN");
+  config.gatekeeper_target = GetEnvOrEmpty("NOTARY_GATEKEEPER_TARGET");
+  config.gatekeeper_ca_path = GetEnvOrEmpty("NOTARY_GATEKEEPER_CA_BUNDLE");
+  config.gatekeeper_allow_insecure =
+      GetEnvOrDefaultBool("NOTARY_GATEKEEPER_ALLOW_INSECURE", false);
 
   if (config.bind_addr.empty()) {
     throw std::runtime_error("NOTARY_BIND_ADDR is required");
@@ -62,6 +66,13 @@ NotaryConfig LoadConfig() {
   }
   if (config.signer_key_path.empty()) {
     throw std::runtime_error("NOTARY_SIGNER_KEY is required");
+  }
+  if (config.gatekeeper_target.empty()) {
+    throw std::runtime_error("NOTARY_GATEKEEPER_TARGET is required");
+  }
+  if (!config.gatekeeper_allow_insecure && config.gatekeeper_ca_path.empty()) {
+    throw std::runtime_error(
+        "NOTARY_GATEKEEPER_CA_BUNDLE is required unless insecure gatekeeper mode is enabled");
   }
   if (config.tls_require_client_cert && config.tls_ca_path.empty()) {
     throw std::runtime_error(

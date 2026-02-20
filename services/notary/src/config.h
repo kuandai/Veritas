@@ -14,6 +14,10 @@ struct NotaryConfig {
   std::string signer_cert_path;
   std::string signer_key_path;
   std::string signer_chain_path;
+
+  std::string gatekeeper_target;
+  std::string gatekeeper_ca_path;
+  bool gatekeeper_allow_insecure = false;
 };
 
 NotaryConfig LoadConfig();
