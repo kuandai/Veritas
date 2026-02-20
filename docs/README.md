@@ -14,6 +14,9 @@ to separate architecture, component docs, protocols, and status snapshots.
   - `components/notary.md`
   - `components/shared.md`
   - `components/libveritas.md`
+- `operations/`
+  - `operations/notary-runbook.md`
+  - `operations/notary-release-checklist.md`
 - `protocol/README.md`: protobuf layout and status.
 - `security/changes.md`: deployment-impacting security behavior and operator
   responsibilities.

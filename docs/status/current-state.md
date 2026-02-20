@@ -21,8 +21,13 @@ items.
   sasldb provisioning.
 - Strict SRP verification is wired in `scripts/test_srp_strict.sh` and the
   `security-srp` GitHub Actions workflow (`.github/workflows/security-srp.yml`).
+- CI workflow includes explicit notary coverage lanes:
+  - `notary-lifecycle` (runs `veritas_notary_tests`),
+  - `tsan-nightly` includes `veritas_notary_tests` in sanitizer scope.
 - Redis TLS integration test entrypoint is `scripts/test_redis_tls_integration.sh`.
 - Local Gatekeeper/auth demo smoke test entrypoint is `scripts/smoke_auth_demo.sh`.
+- Local Notary lifecycle smoke test entrypoint is
+  `scripts/smoke_notary_lifecycle.sh`.
 **Aspirational:** replace `file(GLOB_RECURSE ...)` with explicit source lists
 as the codebase stabilizes.
 
@@ -36,6 +41,9 @@ as the codebase stabilizes.
     `veritas_gatekeeper.conf`.
   - The server accepts `SASL_CONTINUE` with a final server proof as
     success.
+- Local Notary lifecycle behavior can be exercised with
+  `scripts/smoke_notary_lifecycle.sh`, which runs a deterministic
+  `issue -> renew -> revoke -> status` path.
 
 ## Component status (summary)
 
@@ -98,7 +106,6 @@ Implemented
 
 Placeholders / incomplete
 - `protocol/identity.proto` is explicitly a placeholder.
-- `notary.proto` is contract-only; there is no runtime Notary service behavior yet.
 - Cross-service protocol version negotiation is not implemented.
 
 Aspirational
@@ -268,9 +275,6 @@ Aspirational
 
 - SASL verifier provisioning (still external sasldb/auxprop tooling).
 - Shared storage layer and cross-service integration.
-- TSAN lane is wired as nightly/workflow-dispatch in
-  `.github/workflows/security-srp.yml`.
-- Revocation integration lane is wired in CI alongside strict SRP.
 - External Redis TLS connectivity validation requires a provisioned test endpoint.
 - Release transport policy gates were validated in `build_release` via:
   `ConfigTest.LoadConfigRejectsSaslDisabled` and

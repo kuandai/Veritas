@@ -76,6 +76,10 @@ authenticated authorization context.
     fields,
   - security counters track key events (`rate_limited`, `authz_failure`,
     `validation_failure`, `policy_denied`) for future lockout policy work.
+- Operational/demo entrypoints:
+  - lifecycle smoke command: `scripts/smoke_notary_lifecycle.sh`,
+  - runbook: `docs/operations/notary-runbook.md`,
+  - release checklist: `docs/operations/notary-release-checklist.md`.
 
 ## Placeholders / incomplete
 
@@ -86,4 +90,5 @@ authenticated authorization context.
 
 ## Aspirational
 
-- Full notary service implementation with shared token store integration.
+- Runtime-tunable abuse controls and exportable security metrics.
+- Dedicated external notary RPC demo client for deployment smoke checks.

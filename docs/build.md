@@ -120,9 +120,20 @@ authenticate via `veritas_auth_demo`):
 
 The script writes logs under `/tmp/veritas_smoke` by default.
 
-## 11. Sanitizer Notes
+## 11. Notary Lifecycle Smoke Test
 
-No dedicated TSAN CI lane is wired yet. For local ASAN/UBSAN checks:
+Run the notary lifecycle smoke path (`issue -> renew -> revoke -> status`)
+through the deterministic test harness:
+
+```bash
+./scripts/smoke_notary_lifecycle.sh
+```
+
+## 12. Sanitizer Notes
+
+TSAN coverage is wired in CI as the `tsan-nightly` job in
+`.github/workflows/security-srp.yml` (nightly schedule + manual dispatch).
+For local ASAN/UBSAN checks:
 
 ```bash
 cmake -S . -B build \
@@ -138,7 +149,7 @@ For Gatekeeper auth/session sanitizer runs, use
 `ASAN_OPTIONS=detect_leaks=0` to ignore known Cyrus SRP leak reports in
 third-party code paths.
 
-## 12. Release Transport Gate Checks
+## 13. Release Transport Gate Checks
 
 To validate release-mode transport policy gates:
 
