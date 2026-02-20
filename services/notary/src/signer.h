@@ -32,6 +32,22 @@ class SignerConfigError : public std::runtime_error {
   SignerConfigErrorCode code_;
 };
 
+enum class SignerIssueErrorCode {
+  InvalidRequest,
+  PolicyDenied,
+  Internal,
+};
+
+class SignerIssueError : public std::runtime_error {
+ public:
+  SignerIssueError(SignerIssueErrorCode code, const std::string& message);
+
+  SignerIssueErrorCode code() const noexcept;
+
+ private:
+  SignerIssueErrorCode code_;
+};
+
 struct SigningRequest {
   std::string csr_der;
   std::chrono::seconds requested_ttl{};
@@ -41,6 +57,8 @@ struct SigningResult {
   std::string certificate_pem;
   std::string certificate_chain_pem;
   std::string certificate_serial;
+  std::chrono::system_clock::time_point not_before{};
+  std::chrono::system_clock::time_point not_after{};
 };
 
 class Signer {

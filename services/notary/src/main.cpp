@@ -8,6 +8,8 @@
 #include "log_utils.h"
 #include "notary_service.h"
 #include "server.h"
+#include "signer.h"
+#include "veritas/shared/issuance_store.h"
 
 int main() {
   try {
@@ -27,7 +29,21 @@ int main() {
     auto authorizer = std::make_shared<veritas::notary::RefreshTokenAuthorizer>(
         status_client);
 
-    veritas::notary::NotaryServiceImpl service(authorizer);
+    veritas::shared::SharedStoreConfig store_config;
+    store_config.backend =
+        config.store_backend == veritas::notary::NotaryStoreBackend::Redis
+            ? veritas::shared::SharedStoreBackend::Redis
+            : veritas::shared::SharedStoreBackend::InMemory;
+    store_config.redis_uri = config.store_uri;
+
+    auto issuance_store = veritas::shared::CreateIssuanceStore(store_config);
+    auto signer = std::make_shared<veritas::notary::OpenSslSigner>(
+        veritas::notary::SignerConfig{config.signer_cert_path,
+                                      config.signer_key_path,
+                                      config.signer_chain_path});
+
+    veritas::notary::NotaryServiceImpl service(authorizer, signer,
+                                               issuance_store);
     auto runtime = veritas::notary::StartNotaryServer(config, &service);
     veritas::notary::LogNotaryEvent("Startup", grpc::Status::OK,
                                     runtime.bound_addr);

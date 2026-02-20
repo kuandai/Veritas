@@ -39,6 +39,10 @@ void ValidateIssuanceRecord(const IssuanceRecord& record) {
     throw SharedStoreError(SharedStoreError::Kind::InvalidArgument,
                            "certificate serial is required");
   }
+  if (record.certificate_pem.empty()) {
+    throw SharedStoreError(SharedStoreError::Kind::InvalidArgument,
+                           "certificate PEM is required");
+  }
   if (record.user_uuid.empty()) {
     throw SharedStoreError(SharedStoreError::Kind::InvalidArgument,
                            "user UUID is required");
@@ -188,6 +192,8 @@ class RedisIssuanceStore final : public IssuanceStore {
 
       std::unordered_map<std::string, std::string> fields;
       fields.emplace("user_uuid", record.user_uuid);
+      fields.emplace("certificate_pem", record.certificate_pem);
+      fields.emplace("certificate_chain_pem", record.certificate_chain_pem);
       fields.emplace("token_hash", record.token_hash);
       fields.emplace("idempotency_key", record.idempotency_key);
       fields.emplace("issued_at", std::to_string(ToUnixSeconds(record.issued_at)));
@@ -218,6 +224,8 @@ class RedisIssuanceStore final : public IssuanceStore {
       IssuanceRecord record;
       record.certificate_serial = certificate_serial;
       record.user_uuid = fields["user_uuid"];
+      record.certificate_pem = fields["certificate_pem"];
+      record.certificate_chain_pem = fields["certificate_chain_pem"];
       record.token_hash = fields["token_hash"];
       record.idempotency_key = fields["idempotency_key"];
       record.issued_at = FromUnixSecondsString(fields["issued_at"]);

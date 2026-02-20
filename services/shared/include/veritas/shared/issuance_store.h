@@ -25,6 +25,8 @@ enum class IssuanceState {
 
 struct IssuanceRecord {
   std::string certificate_serial;
+  std::string certificate_pem;
+  std::string certificate_chain_pem;
   std::string user_uuid;
   std::string token_hash;
   std::string idempotency_key;

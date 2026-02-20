@@ -34,6 +34,17 @@ bool GetEnvOrDefaultBool(const char* name, bool fallback) {
   return fallback;
 }
 
+NotaryStoreBackend ParseStoreBackend(const std::string& value) {
+  if (value.empty() || value == "memory" || value == "in-memory") {
+    return NotaryStoreBackend::InMemory;
+  }
+  if (value == "redis") {
+    return NotaryStoreBackend::Redis;
+  }
+  throw std::runtime_error(
+      "NOTARY_STORE_BACKEND must be one of: memory, in-memory, redis");
+}
+
 }  // namespace
 
 NotaryConfig LoadConfig() {
@@ -51,6 +62,9 @@ NotaryConfig LoadConfig() {
   config.gatekeeper_ca_path = GetEnvOrEmpty("NOTARY_GATEKEEPER_CA_BUNDLE");
   config.gatekeeper_allow_insecure =
       GetEnvOrDefaultBool("NOTARY_GATEKEEPER_ALLOW_INSECURE", false);
+  config.store_backend =
+      ParseStoreBackend(GetEnvOrEmpty("NOTARY_STORE_BACKEND"));
+  config.store_uri = GetEnvOrEmpty("NOTARY_STORE_URI");
 
   if (config.bind_addr.empty()) {
     throw std::runtime_error("NOTARY_BIND_ADDR is required");
@@ -77,6 +91,11 @@ NotaryConfig LoadConfig() {
   if (config.tls_require_client_cert && config.tls_ca_path.empty()) {
     throw std::runtime_error(
         "NOTARY_TLS_CA_BUNDLE is required when mTLS is enabled");
+  }
+  if (config.store_backend == NotaryStoreBackend::Redis &&
+      config.store_uri.empty()) {
+    throw std::runtime_error(
+        "NOTARY_STORE_URI is required when NOTARY_STORE_BACKEND=redis");
   }
 
   return config;

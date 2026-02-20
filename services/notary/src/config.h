@@ -4,6 +4,11 @@
 
 namespace veritas::notary {
 
+enum class NotaryStoreBackend {
+  InMemory,
+  Redis,
+};
+
 struct NotaryConfig {
   std::string bind_addr;
   std::string tls_cert_path;
@@ -18,6 +23,9 @@ struct NotaryConfig {
   std::string gatekeeper_target;
   std::string gatekeeper_ca_path;
   bool gatekeeper_allow_insecure = false;
+
+  NotaryStoreBackend store_backend = NotaryStoreBackend::InMemory;
+  std::string store_uri;
 };
 
 NotaryConfig LoadConfig();
