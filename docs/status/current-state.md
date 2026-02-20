@@ -110,6 +110,7 @@ Implemented
 - `veritas_shared` exposes a build-id helper.
 - Shared issuance store abstraction is implemented:
   - issuance record model and storage interface,
+  - certificate payload persistence for deterministic idempotent replay,
   - token-hash to certificate-serial linkage,
   - idempotency registration/lookup semantics,
   - revocation-state updates.
@@ -118,7 +119,6 @@ Implemented
   - Redis (with explicit unavailable errors when Redis support is disabled).
 
 Placeholders / incomplete
-- Notary runtime is not yet wired to use shared issuance persistence.
 - Gatekeeper token-store implementation is still service-local.
 
 Aspirational
@@ -132,6 +132,11 @@ Implemented
   - TLS 1.3-only server credential setup,
   - optional mTLS policy via `NOTARY_TLS_REQUIRE_CLIENT_CERT`,
   - gRPC health service enablement + serving status initialization.
+- Notary startup now wires signer + issuance store dependencies:
+  - signer config from `NOTARY_SIGNER_CERT`, `NOTARY_SIGNER_KEY`,
+    `NOTARY_SIGNER_CHAIN`.
+  - shared store backend from `NOTARY_STORE_BACKEND=memory|redis`.
+  - Redis store mode requires `NOTARY_STORE_URI`.
 - Gatekeeper-backed authorization is wired into mutating Notary RPCs:
   - `NOTARY_GATEKEEPER_TARGET` is required.
   - secure Gatekeeper transport requires `NOTARY_GATEKEEPER_CA_BUNDLE` unless
@@ -146,27 +151,34 @@ Implemented
 - Notary PKI policy baseline exists:
   `docs/architecture/notary-pki-policy.md`.
 - Notary v1 RPC contract is frozen in `protocol/notary.proto`.
-- Signer abstraction exists in `services/notary/src/signer.*` with startup
-  key-material validation hooks:
-  - required path checks,
-  - PEM parse checks,
-  - certificate/private-key match checks.
+- Signer abstraction exists in `services/notary/src/signer.*` with:
+  - startup key-material validation hooks (path checks, PEM parse, key/cert
+    match),
+  - OpenSSL CSR issuance path (signature verification, SAN/CN/key policy, TTL
+    clamp, key-usage/EKU extensions).
+- `IssueCertificate` implementation is wired:
+  - deterministic request validation (token, CSR, idempotency, minimum TTL),
+  - authz enforcement via Gatekeeper token status,
+  - signer invocation and leaf + chain response mapping,
+  - issuance + idempotency persistence into shared store,
+  - idempotent replay for duplicate request key + same token hash.
 - Structured JSON event logging is available for startup and RPC-path events.
 - Unit/integration tests cover:
   - config validation and read-file behavior,
   - Gatekeeper token-status authorizer mapping and gRPC path,
-  - mutating RPC authz-gate behavior (deny/allow placeholder transition),
-  - signer validation hooks,
+  - issue handler authz/validation/idempotency paths,
+  - signer validation + issuance policy paths,
   - startup success with health-service availability,
-  - fail-closed startup on invalid signer material.
+  - fail-closed startup on invalid signer material,
+  - shared issuance store record/idempotency/revocation behavior.
 
 Placeholders / incomplete
-- Notary issuance/renewal/revocation/status business logic is not implemented;
-  mutating handlers return `FAILED_PRECONDITION` after successful authz.
-- OpenSSL signer issuance method is a placeholder (not implemented).
+- `RenewCertificate` and `RevokeCertificate` still return
+  `FAILED_PRECONDITION` after successful authz.
+- `GetCertificateStatus` remains a placeholder handler.
 
 Aspirational
-- Notary service with shared token store integration.
+- Full renewal/revocation/status lifecycle implementation.
 
 ### services/gatekeeper (SASL service)
 
