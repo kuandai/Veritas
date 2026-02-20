@@ -16,6 +16,7 @@ items.
 
 - CMake + Conan, C++20.
 - gRPC/Protobuf code generation is wired through the `protocol` target.
+- Dedicated Notary test target is wired as `veritas_notary_tests`.
 - Custom Cyrus SASL recipe applies an SRP `sasl_setpass` fix required for
   sasldb provisioning.
 - Strict SRP verification is wired in `scripts/test_srp_strict.sh` and the
@@ -117,7 +118,11 @@ Aspirational
 ### services/notary
 
 Implemented
-- Minimal CLI that prints the shared build id.
+- Notary gRPC server skeleton is implemented with:
+  - fail-closed env config parsing (`NOTARY_*` settings),
+  - TLS 1.3-only server credential setup,
+  - optional mTLS policy via `NOTARY_TLS_REQUIRE_CLIENT_CERT`,
+  - gRPC health service enablement + serving status initialization.
 - Notary Sprint 1 trust model document exists:
   `docs/architecture/notary-threat-model.md`.
 - Notary PKI policy baseline exists:
@@ -128,9 +133,15 @@ Implemented
   - required path checks,
   - PEM parse checks,
   - certificate/private-key match checks.
+- Structured JSON event logging is available for startup and RPC-path events.
+- Unit/integration tests cover:
+  - config validation and read-file behavior,
+  - signer validation hooks,
+  - startup success with health-service availability,
+  - fail-closed startup on invalid signer material.
 
 Placeholders / incomplete
-- No notary logic implemented.
+- Notary RPC business logic is not implemented (`UNIMPLEMENTED` handlers).
 - OpenSSL signer issuance method is a placeholder (not implemented).
 
 Aspirational
