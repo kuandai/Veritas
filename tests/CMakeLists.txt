@@ -16,6 +16,7 @@ set(VERITAS_TEST_SOURCES
   gatekeeper/tls_utils_test.cpp
   gatekeeper/token_store_test.cpp
   gatekeeper/token_utils_test.cpp
+  notary/signer_test.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/auth_metrics.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/config.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/fake_salt.cpp
@@ -26,6 +27,7 @@ set(VERITAS_TEST_SOURCES
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/tls_utils.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_store.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_utils.cpp
+  ${CMAKE_SOURCE_DIR}/services/notary/src/signer.cpp
 )
 
 if(VERITAS_ENABLE_PROTO_TESTS)
@@ -46,6 +48,7 @@ add_executable(veritas_gatekeeper_tests ${VERITAS_TEST_SOURCES})
 target_include_directories(veritas_gatekeeper_tests
   PRIVATE
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src
+    ${CMAKE_SOURCE_DIR}/services/notary/src
     ${CMAKE_BINARY_DIR}/protocol
 )
 
