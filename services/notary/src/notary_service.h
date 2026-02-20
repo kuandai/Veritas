@@ -7,6 +7,7 @@
 
 #include "authorizer.h"
 #include "notary.grpc.pb.h"
+#include "security_controls.h"
 #include "signer.h"
 #include "veritas/shared/issuance_store.h"
 
@@ -16,7 +17,9 @@ class NotaryServiceImpl final : public veritas::notary::v1::Notary::Service {
  public:
   NotaryServiceImpl(std::shared_ptr<RequestAuthorizer> authorizer,
                     std::shared_ptr<Signer> signer,
-                    std::shared_ptr<veritas::shared::IssuanceStore> issuance_store);
+                    std::shared_ptr<veritas::shared::IssuanceStore> issuance_store,
+                    std::shared_ptr<RateLimiter> rate_limiter = nullptr,
+                    std::shared_ptr<SecurityMetrics> security_metrics = nullptr);
 
   grpc::Status IssueCertificate(
       grpc::ServerContext* context,
@@ -39,6 +42,8 @@ class NotaryServiceImpl final : public veritas::notary::v1::Notary::Service {
   std::shared_ptr<RequestAuthorizer> authorizer_;
   std::shared_ptr<Signer> signer_;
   std::shared_ptr<veritas::shared::IssuanceStore> issuance_store_;
+  std::shared_ptr<RateLimiter> rate_limiter_;
+  std::shared_ptr<SecurityMetrics> security_metrics_;
 };
 
 }  // namespace veritas::notary

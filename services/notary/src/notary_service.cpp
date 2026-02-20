@@ -18,6 +18,12 @@ namespace {
 constexpr uint32_t kMinIssueTtlSeconds = 60;
 constexpr uint32_t kMaxIssueTtlSeconds = 24 * 60 * 60;
 constexpr auto kRenewalOverlapWindow = std::chrono::minutes(15);
+constexpr size_t kMaxRefreshTokenBytes = 4096;
+constexpr size_t kMaxCsrDerBytes = 64 * 1024;
+constexpr size_t kMaxIdempotencyKeyBytes = 128;
+constexpr size_t kMaxSerialBytes = 128;
+constexpr size_t kMaxReasonBytes = 128;
+constexpr size_t kMaxActorBytes = 128;
 
 void SetError(veritas::notary::v1::NotaryErrorDetail* error,
               veritas::notary::v1::NotaryErrorCode code,
@@ -308,15 +314,30 @@ grpc::Status ValidateIssueRequest(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
         "refresh_token is required");
   }
+  if (request.refresh_token().size() > kMaxRefreshTokenBytes) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "refresh_token exceeds size limit");
+  }
   if (request.csr_der().empty()) {
     return StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
         "csr_der is required");
   }
+  if (request.csr_der().size() > kMaxCsrDerBytes) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "csr_der exceeds size limit");
+  }
   if (request.idempotency_key().empty()) {
     return StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
         "idempotency_key is required");
+  }
+  if (request.idempotency_key().size() > kMaxIdempotencyKeyBytes) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "idempotency_key exceeds size limit");
   }
 
   if (request.requested_ttl_seconds() < kMinIssueTtlSeconds) {
@@ -340,15 +361,30 @@ grpc::Status ValidateRenewRequest(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
         "refresh_token is required");
   }
+  if (request.refresh_token().size() > kMaxRefreshTokenBytes) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "refresh_token exceeds size limit");
+  }
   if (request.certificate_serial().empty()) {
     return StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
         "certificate_serial is required");
   }
+  if (request.certificate_serial().size() > kMaxSerialBytes) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "certificate_serial exceeds size limit");
+  }
   if (request.idempotency_key().empty()) {
     return StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
         "idempotency_key is required");
+  }
+  if (request.idempotency_key().size() > kMaxIdempotencyKeyBytes) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "idempotency_key exceeds size limit");
   }
   if (request.requested_ttl_seconds() < kMinIssueTtlSeconds) {
     return StatusWithNotaryError(
@@ -370,20 +406,40 @@ grpc::Status ValidateRevokeRequest(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
         "refresh_token is required");
   }
+  if (request.refresh_token().size() > kMaxRefreshTokenBytes) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "refresh_token exceeds size limit");
+  }
   if (request.certificate_serial().empty()) {
     return StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
         "certificate_serial is required");
+  }
+  if (request.certificate_serial().size() > kMaxSerialBytes) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "certificate_serial exceeds size limit");
   }
   if (request.reason().empty()) {
     return StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
         "reason is required");
   }
+  if (request.reason().size() > kMaxReasonBytes) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "reason exceeds size limit");
+  }
   if (request.actor().empty()) {
     return StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
         "actor is required");
+  }
+  if (request.actor().size() > kMaxActorBytes) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "actor exceeds size limit");
   }
   return grpc::Status::OK;
 }
@@ -398,10 +454,14 @@ std::string DeriveSubjectMarker(const std::string& token_hash) {
 
 NotaryServiceImpl::NotaryServiceImpl(
     std::shared_ptr<RequestAuthorizer> authorizer, std::shared_ptr<Signer> signer,
-    std::shared_ptr<veritas::shared::IssuanceStore> issuance_store)
+    std::shared_ptr<veritas::shared::IssuanceStore> issuance_store,
+    std::shared_ptr<RateLimiter> rate_limiter,
+    std::shared_ptr<SecurityMetrics> security_metrics)
     : authorizer_(std::move(authorizer)),
       signer_(std::move(signer)),
-      issuance_store_(std::move(issuance_store)) {
+      issuance_store_(std::move(issuance_store)),
+      rate_limiter_(std::move(rate_limiter)),
+      security_metrics_(std::move(security_metrics)) {
   if (!authorizer_) {
     throw std::runtime_error("notary authorizer is required");
   }
@@ -411,22 +471,40 @@ NotaryServiceImpl::NotaryServiceImpl(
   if (!issuance_store_) {
     throw std::runtime_error("notary issuance store is required");
   }
+  if (!rate_limiter_) {
+    rate_limiter_ = std::make_shared<FixedWindowRateLimiter>();
+  }
+  if (!security_metrics_) {
+    security_metrics_ = std::make_shared<InMemorySecurityMetrics>();
+  }
 }
 
 grpc::Status NotaryServiceImpl::IssueCertificate(
-    grpc::ServerContext* /*context*/,
+    grpc::ServerContext* context,
     const veritas::notary::v1::IssueCertificateRequest* request,
     veritas::notary::v1::IssueCertificateResponse* response) {
+  const auto rate_key = std::string("issue:") + ExtractPeerIdentity(context);
+  if (!rate_limiter_->Allow(rate_key)) {
+    security_metrics_->Increment("rate_limited");
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_RATE_LIMITED,
+        "request rate limit exceeded");
+    LogNotaryEvent("IssueCertificate", status, "rate_limited");
+    return status;
+  }
+
   std::chrono::seconds requested_ttl{};
   const auto validation_status =
       ValidateIssueRequest(*request, response, &requested_ttl);
   if (!validation_status.ok()) {
+    security_metrics_->Increment("validation_failure");
     LogNotaryEvent("IssueCertificate", validation_status, "validation_failed");
     return validation_status;
   }
 
   const auto authz = authorizer_->AuthorizeRefreshToken(request->refresh_token());
   if (!authz.ok()) {
+    security_metrics_->Increment("authz_failure");
     const auto mapped = MapAuthzStatusToIssueStatus(authz, response);
     LogNotaryEvent("IssueCertificate", mapped, "authorization_failed");
     return mapped;
@@ -455,6 +533,7 @@ grpc::Status NotaryServiceImpl::IssueCertificate(
         return status;
       }
       if (existing_record->token_hash != token_hash) {
+        security_metrics_->Increment("policy_denied");
         const auto status = StatusWithNotaryError(
             response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
             "idempotency key is already bound to another token");
@@ -548,19 +627,31 @@ grpc::Status NotaryServiceImpl::IssueCertificate(
 }
 
 grpc::Status NotaryServiceImpl::RenewCertificate(
-    grpc::ServerContext* /*context*/,
+    grpc::ServerContext* context,
     const veritas::notary::v1::RenewCertificateRequest* request,
     veritas::notary::v1::RenewCertificateResponse* response) {
+  const auto rate_key = std::string("renew:") + ExtractPeerIdentity(context);
+  if (!rate_limiter_->Allow(rate_key)) {
+    security_metrics_->Increment("rate_limited");
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_RATE_LIMITED,
+        "request rate limit exceeded");
+    LogNotaryEvent("RenewCertificate", status, "rate_limited");
+    return status;
+  }
+
   std::chrono::seconds requested_ttl{};
   const auto validation_status =
       ValidateRenewRequest(*request, response, &requested_ttl);
   if (!validation_status.ok()) {
+    security_metrics_->Increment("validation_failure");
     LogNotaryEvent("RenewCertificate", validation_status, "validation_failed");
     return validation_status;
   }
 
   const auto authz = authorizer_->AuthorizeRefreshToken(request->refresh_token());
   if (!authz.ok()) {
+    security_metrics_->Increment("authz_failure");
     const auto mapped = MapAuthzStatusToRenewStatus(authz, response);
     LogNotaryEvent("RenewCertificate", mapped, "authorization_failed");
     return mapped;
@@ -589,6 +680,7 @@ grpc::Status NotaryServiceImpl::RenewCertificate(
         return status;
       }
       if (existing_record->token_hash != token_hash) {
+        security_metrics_->Increment("policy_denied");
         const auto status = StatusWithNotaryError(
             response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
             "idempotency key is already bound to another token");
@@ -622,6 +714,7 @@ grpc::Status NotaryServiceImpl::RenewCertificate(
     return status;
   }
   if (current_record->token_hash != token_hash) {
+    security_metrics_->Increment("policy_denied");
     const auto status = StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
         "certificate does not belong to this token");
@@ -629,6 +722,7 @@ grpc::Status NotaryServiceImpl::RenewCertificate(
     return status;
   }
   if (current_record->state == veritas::shared::IssuanceState::Revoked) {
+    security_metrics_->Increment("policy_denied");
     const auto status = StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_TOKEN_REVOKED,
         "certificate is revoked");
@@ -638,6 +732,7 @@ grpc::Status NotaryServiceImpl::RenewCertificate(
 
   const auto now = std::chrono::system_clock::now();
   if (current_record->expires_at <= now) {
+    security_metrics_->Increment("policy_denied");
     const auto status = StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_TOKEN_EXPIRED,
         "certificate is expired");
@@ -645,6 +740,7 @@ grpc::Status NotaryServiceImpl::RenewCertificate(
     return status;
   }
   if (current_record->expires_at > now + kRenewalOverlapWindow) {
+    security_metrics_->Increment("policy_denied");
     const auto status = StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
         "renewal request is outside overlap window");
@@ -729,17 +825,29 @@ grpc::Status NotaryServiceImpl::RenewCertificate(
 }
 
 grpc::Status NotaryServiceImpl::RevokeCertificate(
-    grpc::ServerContext* /*context*/,
+    grpc::ServerContext* context,
     const veritas::notary::v1::RevokeCertificateRequest* request,
     veritas::notary::v1::RevokeCertificateResponse* response) {
+  const auto rate_key = std::string("revoke:") + ExtractPeerIdentity(context);
+  if (!rate_limiter_->Allow(rate_key)) {
+    security_metrics_->Increment("rate_limited");
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_RATE_LIMITED,
+        "request rate limit exceeded");
+    LogNotaryEvent("RevokeCertificate", status, "rate_limited");
+    return status;
+  }
+
   const auto validation_status = ValidateRevokeRequest(*request, response);
   if (!validation_status.ok()) {
+    security_metrics_->Increment("validation_failure");
     LogNotaryEvent("RevokeCertificate", validation_status, "validation_failed");
     return validation_status;
   }
 
   const auto authz = authorizer_->AuthorizeRefreshToken(request->refresh_token());
   if (!authz.ok()) {
+    security_metrics_->Increment("authz_failure");
     const auto mapped = MapAuthzStatusToRevokeStatus(authz, response);
     LogNotaryEvent("RevokeCertificate", mapped, "authorization_failed");
     return mapped;
@@ -772,6 +880,7 @@ grpc::Status NotaryServiceImpl::RevokeCertificate(
     return status;
   }
   if (current_record->token_hash != token_hash) {
+    security_metrics_->Increment("policy_denied");
     const auto status = StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
         "certificate does not belong to this token");
@@ -779,6 +888,7 @@ grpc::Status NotaryServiceImpl::RevokeCertificate(
     return status;
   }
   if (current_record->state == veritas::shared::IssuanceState::Revoked) {
+    security_metrics_->Increment("policy_denied");
     const auto status = StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_ALREADY_REVOKED,
         "certificate is already revoked");
@@ -803,10 +913,21 @@ grpc::Status NotaryServiceImpl::RevokeCertificate(
 }
 
 grpc::Status NotaryServiceImpl::GetCertificateStatus(
-    grpc::ServerContext* /*context*/,
+    grpc::ServerContext* context,
     const veritas::notary::v1::GetCertificateStatusRequest* request,
     veritas::notary::v1::GetCertificateStatusResponse* response) {
+  const auto rate_key = std::string("status:") + ExtractPeerIdentity(context);
+  if (!rate_limiter_->Allow(rate_key)) {
+    security_metrics_->Increment("rate_limited");
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_RATE_LIMITED,
+        "request rate limit exceeded");
+    LogNotaryEvent("GetCertificateStatus", status, "rate_limited");
+    return status;
+  }
+
   if (request->certificate_serial().empty()) {
+    security_metrics_->Increment("validation_failure");
     const auto status = StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
         "certificate_serial is required");
