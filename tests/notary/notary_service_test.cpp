@@ -101,8 +101,9 @@ class ConflictAfterWriteStore final : public veritas::shared::IssuanceStore {
   }
 
   void Revoke(const std::string& certificate_serial, const std::string& reason,
+              const std::string& actor,
               std::chrono::system_clock::time_point revoked_at) override {
-    delegate_->Revoke(certificate_serial, reason, revoked_at);
+    delegate_->Revoke(certificate_serial, reason, actor, revoked_at);
   }
 
  private:
@@ -460,7 +461,7 @@ TEST(NotaryServiceTest, RenewCertificateRecoversFromConflictAfterWrite) {
   EXPECT_EQ(renew_response.certificate_serial(), "serial-2");
 }
 
-TEST(NotaryServiceTest, RevokeCertificateAppliesAuthorizationGate) {
+TEST(NotaryServiceTest, RevokeCertificateDeniesUnauthorizedRequests) {
   auto denied_authorizer = std::make_shared<FixedAuthorizer>(
       grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "invalid"));
   auto signer = std::make_shared<FakeSigner>();
@@ -471,23 +472,180 @@ TEST(NotaryServiceTest, RevokeCertificateAppliesAuthorizationGate) {
   veritas::notary::v1::RevokeCertificateRequest revoke_request;
   veritas::notary::v1::RevokeCertificateResponse revoke_response;
   revoke_request.set_refresh_token("token");
+  revoke_request.set_certificate_serial("serial");
+  revoke_request.set_reason("POLICY_VIOLATION");
+  revoke_request.set_actor("unit-test");
   EXPECT_EQ(
       denied_service
           .RevokeCertificate(&denied_context_revoke, &revoke_request,
                              &revoke_response)
           .error_code(),
       grpc::StatusCode::UNAUTHENTICATED);
+}
 
+TEST(NotaryServiceTest, RevokeCertificateRevokesAndIsIdempotent) {
+  auto authorizer = std::make_shared<FixedAuthorizer>(grpc::Status::OK);
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  NotaryServiceImpl service(authorizer, signer, store);
+
+  const auto now = std::chrono::system_clock::now();
+  SeedIssuedCertificate(&service, signer.get(), "token", "serial-1", now,
+                        now + std::chrono::minutes(10), "issue-idem");
+
+  grpc::ServerContext first_context;
+  veritas::notary::v1::RevokeCertificateRequest revoke_request;
+  veritas::notary::v1::RevokeCertificateResponse first_response;
+  revoke_request.set_refresh_token("token");
+  revoke_request.set_certificate_serial("serial-1");
+  revoke_request.set_reason("TOKEN_REVOKED");
+  revoke_request.set_actor("incident-response");
+  ASSERT_TRUE(
+      service.RevokeCertificate(&first_context, &revoke_request, &first_response)
+          .ok());
+  EXPECT_TRUE(first_response.revoked());
+
+  grpc::ServerContext second_context;
+  veritas::notary::v1::RevokeCertificateResponse second_response;
+  const auto second_status =
+      service.RevokeCertificate(&second_context, &revoke_request, &second_response);
+  EXPECT_EQ(second_status.error_code(), grpc::StatusCode::ALREADY_EXISTS);
+  EXPECT_EQ(second_response.error().code(),
+            veritas::notary::v1::NOTARY_ERROR_CODE_ALREADY_REVOKED);
+}
+
+TEST(NotaryServiceTest, GetCertificateStatusReturnsLifecycleStates) {
+  auto authorizer = std::make_shared<FixedAuthorizer>(grpc::Status::OK);
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  NotaryServiceImpl service(authorizer, signer, store);
+
+  const auto now = std::chrono::system_clock::now();
+  SeedIssuedCertificate(&service, signer.get(), "token", "active-serial", now,
+                        now + std::chrono::minutes(20), "issue-active");
+  SeedIssuedCertificate(&service, signer.get(), "token", "expired-serial",
+                        now - std::chrono::minutes(30),
+                        now - std::chrono::minutes(1), "issue-expired");
+  SeedIssuedCertificate(&service, signer.get(), "token", "revoked-serial", now,
+                        now + std::chrono::minutes(20), "issue-revoked");
+
+  grpc::ServerContext revoke_context;
+  veritas::notary::v1::RevokeCertificateRequest revoke_request;
+  veritas::notary::v1::RevokeCertificateResponse revoke_response;
+  revoke_request.set_refresh_token("token");
+  revoke_request.set_certificate_serial("revoked-serial");
+  revoke_request.set_reason("TOKEN_REVOKED");
+  revoke_request.set_actor("status-test");
+  ASSERT_TRUE(
+      service.RevokeCertificate(&revoke_context, &revoke_request, &revoke_response)
+          .ok());
+
+  grpc::ServerContext active_context;
+  veritas::notary::v1::GetCertificateStatusRequest active_request;
+  veritas::notary::v1::GetCertificateStatusResponse active_response;
+  active_request.set_certificate_serial("active-serial");
+  ASSERT_TRUE(
+      service.GetCertificateStatus(&active_context, &active_request,
+                                   &active_response)
+          .ok());
+  EXPECT_EQ(active_response.state(),
+            veritas::notary::v1::CERTIFICATE_STATUS_STATE_ACTIVE);
+
+  grpc::ServerContext expired_context;
+  veritas::notary::v1::GetCertificateStatusRequest expired_request;
+  veritas::notary::v1::GetCertificateStatusResponse expired_response;
+  expired_request.set_certificate_serial("expired-serial");
+  ASSERT_TRUE(
+      service.GetCertificateStatus(&expired_context, &expired_request,
+                                   &expired_response)
+          .ok());
+  EXPECT_EQ(expired_response.state(),
+            veritas::notary::v1::CERTIFICATE_STATUS_STATE_EXPIRED);
+
+  grpc::ServerContext revoked_context;
+  veritas::notary::v1::GetCertificateStatusRequest revoked_request;
+  veritas::notary::v1::GetCertificateStatusResponse revoked_response;
+  revoked_request.set_certificate_serial("revoked-serial");
+  ASSERT_TRUE(
+      service.GetCertificateStatus(&revoked_context, &revoked_request,
+                                   &revoked_response)
+          .ok());
+  EXPECT_EQ(revoked_response.state(),
+            veritas::notary::v1::CERTIFICATE_STATUS_STATE_REVOKED);
+  EXPECT_EQ(revoked_response.reason(), "TOKEN_REVOKED");
+
+  grpc::ServerContext unknown_context;
+  veritas::notary::v1::GetCertificateStatusRequest unknown_request;
+  veritas::notary::v1::GetCertificateStatusResponse unknown_response;
+  unknown_request.set_certificate_serial("missing");
+  ASSERT_TRUE(
+      service.GetCertificateStatus(&unknown_context, &unknown_request,
+                                   &unknown_response)
+          .ok());
+  EXPECT_EQ(unknown_response.state(),
+            veritas::notary::v1::CERTIFICATE_STATUS_STATE_UNKNOWN);
+}
+
+TEST(NotaryServiceTest, RenewalIsRejectedAfterRevocation) {
+  auto authorizer = std::make_shared<FixedAuthorizer>(grpc::Status::OK);
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  NotaryServiceImpl service(authorizer, signer, store);
+
+  const auto now = std::chrono::system_clock::now();
+  SeedIssuedCertificate(&service, signer.get(), "token", "serial-1", now,
+                        now + std::chrono::minutes(10), "issue-idem");
+
+  grpc::ServerContext revoke_context;
+  veritas::notary::v1::RevokeCertificateRequest revoke_request;
+  veritas::notary::v1::RevokeCertificateResponse revoke_response;
+  revoke_request.set_refresh_token("token");
+  revoke_request.set_certificate_serial("serial-1");
+  revoke_request.set_reason("TOKEN_REVOKED");
+  revoke_request.set_actor("unit-test");
+  ASSERT_TRUE(
+      service.RevokeCertificate(&revoke_context, &revoke_request, &revoke_response)
+          .ok());
+
+  grpc::ServerContext renew_context;
+  veritas::notary::v1::RenewCertificateRequest renew_request;
+  veritas::notary::v1::RenewCertificateResponse renew_response;
+  renew_request.set_refresh_token("token");
+  renew_request.set_certificate_serial("serial-1");
+  renew_request.set_requested_ttl_seconds(1200);
+  renew_request.set_idempotency_key("renew-idem");
+  const auto renew_status =
+      service.RenewCertificate(&renew_context, &renew_request, &renew_response);
+  EXPECT_EQ(renew_status.error_code(), grpc::StatusCode::PERMISSION_DENIED);
+  EXPECT_EQ(renew_response.error().code(),
+            veritas::notary::v1::NOTARY_ERROR_CODE_TOKEN_REVOKED);
+}
+
+TEST(NotaryServiceTest, RevokeCertificateRejectsMissingActorOrReason) {
   auto allow_authorizer = std::make_shared<FixedAuthorizer>(grpc::Status::OK);
-  NotaryServiceImpl allow_service(allow_authorizer, signer, store);
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  NotaryServiceImpl service(allow_authorizer, signer, store);
 
-  grpc::ServerContext allow_context_revoke;
+  grpc::ServerContext context;
+  veritas::notary::v1::RevokeCertificateRequest request;
+  veritas::notary::v1::RevokeCertificateResponse response;
+  request.set_refresh_token("token");
+  request.set_certificate_serial("serial");
+  request.set_reason("TOKEN_REVOKED");
+  EXPECT_EQ(service.RevokeCertificate(&context, &request, &response).error_code(),
+            grpc::StatusCode::INVALID_ARGUMENT);
+
+  grpc::ServerContext context_two;
+  veritas::notary::v1::RevokeCertificateRequest request_two;
+  veritas::notary::v1::RevokeCertificateResponse response_two;
+  request_two.set_refresh_token("token");
+  request_two.set_certificate_serial("serial");
+  request_two.set_actor("unit-test");
   EXPECT_EQ(
-      allow_service
-          .RevokeCertificate(&allow_context_revoke, &revoke_request,
-                             &revoke_response)
+      service.RevokeCertificate(&context_two, &request_two, &response_two)
           .error_code(),
-      grpc::StatusCode::FAILED_PRECONDITION);
+      grpc::StatusCode::INVALID_ARGUMENT);
 }
 
 }  // namespace

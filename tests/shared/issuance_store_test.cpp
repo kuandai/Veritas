@@ -63,12 +63,13 @@ TEST(IssuanceStoreTest, RevokeMarksRecordState) {
 
   store->PutIssuance(MakeRecord("serial-1", "token-1", "idem-1"));
   const auto now = std::chrono::system_clock::now();
-  store->Revoke("serial-1", "policy_violation", now);
+  store->Revoke("serial-1", "policy_violation", "unit-test", now);
 
   const auto updated = store->GetBySerial("serial-1");
   ASSERT_TRUE(updated.has_value());
   EXPECT_EQ(updated->state, IssuanceState::Revoked);
   EXPECT_EQ(updated->revoke_reason, "policy_violation");
+  EXPECT_EQ(updated->revoke_actor, "unit-test");
 }
 
 TEST(IssuanceStoreTest, IdempotencyRegistrationIsThreadSafe) {
