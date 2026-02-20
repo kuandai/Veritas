@@ -13,6 +13,7 @@
 #include <openssl/pem.h>
 #include <openssl/x509.h>
 
+#include "authorizer.h"
 #include "notary_service.h"
 
 namespace veritas::notary {
@@ -133,6 +134,14 @@ void WriteFile(const std::filesystem::path& path, const std::string& data) {
   out << data;
 }
 
+class AllowAuthorizer final : public RequestAuthorizer {
+ public:
+  grpc::Status AuthorizeRefreshToken(
+      std::string_view /*refresh_token*/) const override {
+    return grpc::Status::OK;
+  }
+};
+
 TEST(NotaryServerIntegrationTest, StartsWithTlsAndEnablesHealthService) {
   TempDir temp;
   const auto server_pair = GenerateSelfSigned("veritas-notary-server");
@@ -154,7 +163,8 @@ TEST(NotaryServerIntegrationTest, StartsWithTlsAndEnablesHealthService) {
   config.signer_cert_path = signer_cert.string();
   config.signer_key_path = signer_key.string();
 
-  NotaryServiceImpl service;
+  auto authorizer = std::make_shared<AllowAuthorizer>();
+  NotaryServiceImpl service(authorizer);
   auto runtime = StartNotaryServer(config, &service);
   ASSERT_TRUE(runtime.server != nullptr);
   ASSERT_EQ(runtime.bound_addr.find(":0"), std::string::npos)
@@ -184,7 +194,8 @@ TEST(NotaryServerIntegrationTest, StartupFailsClosedOnInvalidSignerMaterial) {
   config.signer_cert_path = signer_cert.string();
   config.signer_key_path = signer_key.string();
 
-  NotaryServiceImpl service;
+  auto authorizer = std::make_shared<AllowAuthorizer>();
+  NotaryServiceImpl service(authorizer);
   EXPECT_THROW(static_cast<void>(StartNotaryServer(config, &service)),
                std::runtime_error);
 }

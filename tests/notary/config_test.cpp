@@ -58,6 +58,8 @@ struct RequiredEnv {
   ScopedEnv key{"NOTARY_TLS_KEY", "/tmp/notary-key.pem"};
   ScopedEnv signer_cert{"NOTARY_SIGNER_CERT", "/tmp/notary-signer-cert.pem"};
   ScopedEnv signer_key{"NOTARY_SIGNER_KEY", "/tmp/notary-signer-key.pem"};
+  ScopedEnv gatekeeper_target{"NOTARY_GATEKEEPER_TARGET", "127.0.0.1:50051"};
+  ScopedEnv gatekeeper_insecure{"NOTARY_GATEKEEPER_ALLOW_INSECURE", "true"};
 };
 
 }  // namespace
@@ -79,6 +81,13 @@ TEST(NotaryConfigTest, LoadsValidConfiguration) {
   RequiredEnv env;
   ScopedEnv require_client("NOTARY_TLS_REQUIRE_CLIENT_CERT", "false");
   EXPECT_NO_THROW(LoadConfig());
+}
+
+TEST(NotaryConfigTest, SecureGatekeeperModeRequiresCaBundle) {
+  RequiredEnv env;
+  ScopedEnv secure_gatekeeper("NOTARY_GATEKEEPER_ALLOW_INSECURE", "false");
+  ScopedEnv ca_bundle("NOTARY_GATEKEEPER_CA_BUNDLE", nullptr);
+  EXPECT_THROW(LoadConfig(), std::runtime_error);
 }
 
 TEST(NotaryConfigTest, ReadFileReturnsContents) {

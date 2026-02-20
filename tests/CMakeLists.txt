@@ -179,10 +179,13 @@ if(VERITAS_ENABLE_PROTO_TESTS)
 
   set(VERITAS_NOTARY_TEST_SOURCES
     main.cpp
+    notary/authorizer_test.cpp
     notary/config_test.cpp
+    notary/notary_service_test.cpp
     notary/signer_test.cpp
     notary/server_integration_test.cpp
     shared/issuance_store_test.cpp
+    ${CMAKE_SOURCE_DIR}/services/notary/src/authorizer.cpp
     ${CMAKE_SOURCE_DIR}/services/notary/src/config.cpp
     ${CMAKE_SOURCE_DIR}/services/notary/src/log_utils.cpp
     ${CMAKE_SOURCE_DIR}/services/notary/src/notary_service.cpp
