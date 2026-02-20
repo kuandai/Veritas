@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -28,22 +29,109 @@ class FakeSigner final : public Signer {
  public:
   SigningResult Issue(const SigningRequest& /*request*/) override {
     ++issue_calls_;
-    return next_result_;
+    return next_issue_result_;
   }
 
-  void SetNextResult(SigningResult result) { next_result_ = std::move(result); }
+  SigningResult Renew(const RenewalSigningRequest& /*request*/) override {
+    ++renew_calls_;
+    return next_renew_result_;
+  }
+
+  void SetNextIssueResult(SigningResult result) {
+    next_issue_result_ = std::move(result);
+  }
+
+  void SetNextRenewResult(SigningResult result) {
+    next_renew_result_ = std::move(result);
+  }
 
   int issue_calls() const { return issue_calls_; }
+  int renew_calls() const { return renew_calls_; }
 
  private:
-  SigningResult next_result_;
+  SigningResult next_issue_result_;
+  SigningResult next_renew_result_;
   int issue_calls_ = 0;
+  int renew_calls_ = 0;
 };
 
 std::shared_ptr<veritas::shared::IssuanceStore> MakeInMemoryStore() {
   veritas::shared::SharedStoreConfig config;
   config.backend = veritas::shared::SharedStoreBackend::InMemory;
   return veritas::shared::CreateIssuanceStore(config);
+}
+
+class ConflictAfterWriteStore final : public veritas::shared::IssuanceStore {
+ public:
+  explicit ConflictAfterWriteStore(
+      std::shared_ptr<veritas::shared::IssuanceStore> delegate)
+      : delegate_(std::move(delegate)) {}
+
+  void EnableOnce() { enabled_once_ = true; }
+
+  void PutIssuance(const veritas::shared::IssuanceRecord& record) override {
+    if (enabled_once_) {
+      enabled_once_ = false;
+      delegate_->PutIssuance(record);
+      throw veritas::shared::SharedStoreError(
+          veritas::shared::SharedStoreError::Kind::Conflict,
+          "simulated conflict after write");
+    }
+    delegate_->PutIssuance(record);
+  }
+
+  std::optional<veritas::shared::IssuanceRecord> GetBySerial(
+      const std::string& certificate_serial) override {
+    return delegate_->GetBySerial(certificate_serial);
+  }
+
+  std::optional<veritas::shared::IssuanceRecord> GetByTokenHash(
+      const std::string& token_hash) override {
+    return delegate_->GetByTokenHash(token_hash);
+  }
+
+  bool RegisterIdempotencyKey(const std::string& idempotency_key,
+                              const std::string& certificate_serial) override {
+    return delegate_->RegisterIdempotencyKey(idempotency_key, certificate_serial);
+  }
+
+  std::optional<std::string> ResolveIdempotencyKey(
+      const std::string& idempotency_key) override {
+    return delegate_->ResolveIdempotencyKey(idempotency_key);
+  }
+
+  void Revoke(const std::string& certificate_serial, const std::string& reason,
+              std::chrono::system_clock::time_point revoked_at) override {
+    delegate_->Revoke(certificate_serial, reason, revoked_at);
+  }
+
+ private:
+  std::shared_ptr<veritas::shared::IssuanceStore> delegate_;
+  bool enabled_once_ = false;
+};
+
+void SeedIssuedCertificate(NotaryServiceImpl* service, FakeSigner* signer,
+                           const std::string& token,
+                           const std::string& serial,
+                           std::chrono::system_clock::time_point not_before,
+                           std::chrono::system_clock::time_point not_after,
+                           const std::string& idempotency_key) {
+  SigningResult issued;
+  issued.certificate_serial = serial;
+  issued.certificate_pem = "leaf-" + serial;
+  issued.certificate_chain_pem = "chain-" + serial;
+  issued.not_before = not_before;
+  issued.not_after = not_after;
+  signer->SetNextIssueResult(issued);
+
+  grpc::ServerContext context;
+  veritas::notary::v1::IssueCertificateRequest request;
+  veritas::notary::v1::IssueCertificateResponse response;
+  request.set_refresh_token(token);
+  request.set_csr_der("csr");
+  request.set_requested_ttl_seconds(600);
+  request.set_idempotency_key(idempotency_key);
+  ASSERT_TRUE(service->IssueCertificate(&context, &request, &response).ok());
 }
 
 TEST(NotaryServiceTest, IssueCertificateDeniesUnauthorizedRequests) {
@@ -102,7 +190,7 @@ TEST(NotaryServiceTest, IssueCertificatePersistsAndReturnsIssuedRecord) {
   result.certificate_chain_pem = "intermediate-chain";
   result.not_before = now;
   result.not_after = now + std::chrono::minutes(10);
-  signer->SetNextResult(result);
+  signer->SetNextIssueResult(result);
 
   grpc::ServerContext context;
   veritas::notary::v1::IssueCertificateRequest request;
@@ -141,7 +229,7 @@ TEST(NotaryServiceTest, IssueCertificateReplaysIdempotentRequest) {
   first_result.certificate_chain_pem = "chain-1";
   first_result.not_before = std::chrono::system_clock::now();
   first_result.not_after = first_result.not_before + std::chrono::minutes(5);
-  signer->SetNextResult(first_result);
+  signer->SetNextIssueResult(first_result);
 
   grpc::ServerContext context_first;
   veritas::notary::v1::IssueCertificateRequest request;
@@ -160,7 +248,7 @@ TEST(NotaryServiceTest, IssueCertificateReplaysIdempotentRequest) {
   second_result.certificate_chain_pem = "chain-2";
   second_result.not_before = std::chrono::system_clock::now();
   second_result.not_after = second_result.not_before + std::chrono::minutes(5);
-  signer->SetNextResult(second_result);
+  signer->SetNextIssueResult(second_result);
 
   grpc::ServerContext context_replay;
   veritas::notary::v1::IssueCertificateResponse replay_response;
@@ -184,7 +272,7 @@ TEST(NotaryServiceTest, IssueCertificateRejectsIdempotencyTokenMismatch) {
   result.certificate_chain_pem = "chain-1";
   result.not_before = std::chrono::system_clock::now();
   result.not_after = result.not_before + std::chrono::minutes(5);
-  signer->SetNextResult(result);
+  signer->SetNextIssueResult(result);
 
   grpc::ServerContext first_context;
   veritas::notary::v1::IssueCertificateRequest first_request;
@@ -212,7 +300,7 @@ TEST(NotaryServiceTest, IssueCertificateRejectsIdempotencyTokenMismatch) {
             veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED);
 }
 
-TEST(NotaryServiceTest, RenewAndRevokeApplyAuthorizationGate) {
+TEST(NotaryServiceTest, RenewCertificateDeniesUnauthorizedRequests) {
   auto denied_authorizer = std::make_shared<FixedAuthorizer>(
       grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "invalid"));
   auto signer = std::make_shared<FakeSigner>();
@@ -223,11 +311,161 @@ TEST(NotaryServiceTest, RenewAndRevokeApplyAuthorizationGate) {
   veritas::notary::v1::RenewCertificateRequest renew_request;
   veritas::notary::v1::RenewCertificateResponse renew_response;
   renew_request.set_refresh_token("token");
+  renew_request.set_certificate_serial("serial");
+  renew_request.set_requested_ttl_seconds(600);
+  renew_request.set_idempotency_key("idem");
   EXPECT_EQ(
       denied_service
           .RenewCertificate(&denied_context, &renew_request, &renew_response)
           .error_code(),
       grpc::StatusCode::UNAUTHENTICATED);
+}
+
+TEST(NotaryServiceTest, RenewCertificateRejectsOutsideOverlapWindow) {
+  auto authorizer = std::make_shared<FixedAuthorizer>(grpc::Status::OK);
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  NotaryServiceImpl service(authorizer, signer, store);
+
+  const auto now = std::chrono::system_clock::now();
+  SeedIssuedCertificate(&service, signer.get(), "token", "serial-1", now,
+                        now + std::chrono::hours(1), "issue-idem");
+
+  grpc::ServerContext renew_context;
+  veritas::notary::v1::RenewCertificateRequest renew_request;
+  veritas::notary::v1::RenewCertificateResponse renew_response;
+  renew_request.set_refresh_token("token");
+  renew_request.set_certificate_serial("serial-1");
+  renew_request.set_requested_ttl_seconds(600);
+  renew_request.set_idempotency_key("renew-idem");
+
+  const auto status =
+      service.RenewCertificate(&renew_context, &renew_request, &renew_response);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::PERMISSION_DENIED);
+  EXPECT_EQ(renew_response.error().code(),
+            veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED);
+}
+
+TEST(NotaryServiceTest, RenewCertificateSucceedsInsideOverlapWindow) {
+  auto authorizer = std::make_shared<FixedAuthorizer>(grpc::Status::OK);
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  NotaryServiceImpl service(authorizer, signer, store);
+
+  const auto now = std::chrono::system_clock::now();
+  SeedIssuedCertificate(&service, signer.get(), "token", "serial-1", now,
+                        now + std::chrono::minutes(10), "issue-idem");
+
+  SigningResult renewed_result;
+  renewed_result.certificate_serial = "serial-2";
+  renewed_result.certificate_pem = "leaf-serial-2";
+  renewed_result.certificate_chain_pem = "chain-serial-2";
+  renewed_result.not_before = now;
+  renewed_result.not_after = now + std::chrono::minutes(30);
+  signer->SetNextRenewResult(renewed_result);
+
+  grpc::ServerContext renew_context;
+  veritas::notary::v1::RenewCertificateRequest renew_request;
+  veritas::notary::v1::RenewCertificateResponse renew_response;
+  renew_request.set_refresh_token("token");
+  renew_request.set_certificate_serial("serial-1");
+  renew_request.set_requested_ttl_seconds(1200);
+  renew_request.set_idempotency_key("renew-idem");
+
+  const auto status =
+      service.RenewCertificate(&renew_context, &renew_request, &renew_response);
+  ASSERT_TRUE(status.ok());
+  EXPECT_TRUE(renew_response.renewed());
+  EXPECT_EQ(renew_response.certificate_serial(), "serial-2");
+  EXPECT_EQ(signer->renew_calls(), 1);
+}
+
+TEST(NotaryServiceTest, RenewCertificateReplaysIdempotentRequest) {
+  auto authorizer = std::make_shared<FixedAuthorizer>(grpc::Status::OK);
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  NotaryServiceImpl service(authorizer, signer, store);
+
+  const auto now = std::chrono::system_clock::now();
+  SeedIssuedCertificate(&service, signer.get(), "token", "serial-1", now,
+                        now + std::chrono::minutes(10), "issue-idem");
+
+  SigningResult renewed_result;
+  renewed_result.certificate_serial = "serial-2";
+  renewed_result.certificate_pem = "leaf-serial-2";
+  renewed_result.certificate_chain_pem = "chain-serial-2";
+  renewed_result.not_before = now;
+  renewed_result.not_after = now + std::chrono::minutes(30);
+  signer->SetNextRenewResult(renewed_result);
+
+  veritas::notary::v1::RenewCertificateRequest renew_request;
+  renew_request.set_refresh_token("token");
+  renew_request.set_certificate_serial("serial-1");
+  renew_request.set_requested_ttl_seconds(1200);
+  renew_request.set_idempotency_key("renew-idem");
+
+  grpc::ServerContext first_context;
+  veritas::notary::v1::RenewCertificateResponse first_response;
+  ASSERT_TRUE(
+      service.RenewCertificate(&first_context, &renew_request, &first_response)
+          .ok());
+  ASSERT_EQ(signer->renew_calls(), 1);
+
+  signer->SetNextRenewResult(SigningResult{
+      "leaf-unused", "chain-unused", "unused",
+      std::chrono::system_clock::now(),
+      std::chrono::system_clock::now() + std::chrono::minutes(5)});
+
+  grpc::ServerContext second_context;
+  veritas::notary::v1::RenewCertificateResponse second_response;
+  ASSERT_TRUE(
+      service.RenewCertificate(&second_context, &renew_request, &second_response)
+          .ok());
+  EXPECT_EQ(signer->renew_calls(), 1);
+  EXPECT_EQ(second_response.certificate_serial(), "serial-2");
+}
+
+TEST(NotaryServiceTest, RenewCertificateRecoversFromConflictAfterWrite) {
+  auto authorizer = std::make_shared<FixedAuthorizer>(grpc::Status::OK);
+  auto signer = std::make_shared<FakeSigner>();
+  auto base_store = MakeInMemoryStore();
+  auto flaky_store = std::make_shared<ConflictAfterWriteStore>(base_store);
+  NotaryServiceImpl service(authorizer, signer, flaky_store);
+
+  const auto now = std::chrono::system_clock::now();
+  SeedIssuedCertificate(&service, signer.get(), "token", "serial-1", now,
+                        now + std::chrono::minutes(10), "issue-idem");
+
+  SigningResult renewed_result;
+  renewed_result.certificate_serial = "serial-2";
+  renewed_result.certificate_pem = "leaf-serial-2";
+  renewed_result.certificate_chain_pem = "chain-serial-2";
+  renewed_result.not_before = now;
+  renewed_result.not_after = now + std::chrono::minutes(30);
+  signer->SetNextRenewResult(renewed_result);
+  flaky_store->EnableOnce();
+
+  grpc::ServerContext renew_context;
+  veritas::notary::v1::RenewCertificateRequest renew_request;
+  veritas::notary::v1::RenewCertificateResponse renew_response;
+  renew_request.set_refresh_token("token");
+  renew_request.set_certificate_serial("serial-1");
+  renew_request.set_requested_ttl_seconds(1200);
+  renew_request.set_idempotency_key("renew-idem");
+
+  const auto status =
+      service.RenewCertificate(&renew_context, &renew_request, &renew_response);
+  ASSERT_TRUE(status.ok());
+  EXPECT_TRUE(renew_response.renewed());
+  EXPECT_EQ(renew_response.certificate_serial(), "serial-2");
+}
+
+TEST(NotaryServiceTest, RevokeCertificateAppliesAuthorizationGate) {
+  auto denied_authorizer = std::make_shared<FixedAuthorizer>(
+      grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "invalid"));
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  NotaryServiceImpl denied_service(denied_authorizer, signer, store);
 
   grpc::ServerContext denied_context_revoke;
   veritas::notary::v1::RevokeCertificateRequest revoke_request;
@@ -242,13 +480,6 @@ TEST(NotaryServiceTest, RenewAndRevokeApplyAuthorizationGate) {
 
   auto allow_authorizer = std::make_shared<FixedAuthorizer>(grpc::Status::OK);
   NotaryServiceImpl allow_service(allow_authorizer, signer, store);
-
-  grpc::ServerContext allow_context;
-  EXPECT_EQ(
-      allow_service
-          .RenewCertificate(&allow_context, &renew_request, &renew_response)
-          .error_code(),
-      grpc::StatusCode::FAILED_PRECONDITION);
 
   grpc::ServerContext allow_context_revoke;
   EXPECT_EQ(

@@ -411,5 +411,63 @@ TEST(SignerTest, OpenSslSignerClampsTtlToPolicyMaximum) {
   EXPECT_LE(actual_window.count(), max_window.count());
 }
 
+TEST(SignerTest, OpenSslSignerRenewsCertificateFromExistingLeaf) {
+  TempDir temp;
+  const auto issuer_pair = GenerateSelfSignedIssuer();
+  const auto config = BuildSignerConfig(temp, issuer_pair);
+  OpenSslSigner signer(config);
+
+  SigningRequest issue_request;
+  issue_request.csr_der = GenerateCsrDer("svc.example.internal",
+                                         {"svc.example.internal"});
+  issue_request.requested_ttl = std::chrono::minutes(20);
+  const auto issued = signer.Issue(issue_request);
+
+  RenewalSigningRequest renew_request;
+  renew_request.certificate_pem = issued.certificate_pem;
+  renew_request.requested_ttl = std::chrono::minutes(30);
+  const auto renewed = signer.Renew(renew_request);
+  EXPECT_FALSE(renewed.certificate_serial.empty());
+  EXPECT_FALSE(renewed.certificate_pem.empty());
+  EXPECT_NE(renewed.certificate_serial, issued.certificate_serial);
+  EXPECT_LT(renewed.not_before, renewed.not_after);
+}
+
+TEST(SignerTest, OpenSslSignerRenewRejectsMalformedCertificatePem) {
+  TempDir temp;
+  const auto issuer_pair = GenerateSelfSignedIssuer();
+  const auto config = BuildSignerConfig(temp, issuer_pair);
+  OpenSslSigner signer(config);
+
+  RenewalSigningRequest renew_request;
+  renew_request.certificate_pem = "not-a-certificate";
+  renew_request.requested_ttl = std::chrono::minutes(10);
+
+  try {
+    static_cast<void>(signer.Renew(renew_request));
+    FAIL() << "expected SignerIssueError";
+  } catch (const SignerIssueError& ex) {
+    EXPECT_EQ(ex.code(), SignerIssueErrorCode::InvalidRequest);
+  }
+}
+
+TEST(SignerTest, OpenSslSignerRenewRejectsCertificateWithoutSan) {
+  TempDir temp;
+  const auto issuer_pair = GenerateSelfSignedIssuer();
+  const auto config = BuildSignerConfig(temp, issuer_pair);
+  OpenSslSigner signer(config);
+
+  RenewalSigningRequest renew_request;
+  renew_request.certificate_pem = issuer_pair.cert_pem;
+  renew_request.requested_ttl = std::chrono::minutes(10);
+
+  try {
+    static_cast<void>(signer.Renew(renew_request));
+    FAIL() << "expected SignerIssueError";
+  } catch (const SignerIssueError& ex) {
+    EXPECT_EQ(ex.code(), SignerIssueErrorCode::PolicyDenied);
+  }
+}
+
 }  // namespace
 }  // namespace veritas::notary

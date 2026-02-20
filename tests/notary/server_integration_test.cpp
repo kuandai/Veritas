@@ -153,6 +153,15 @@ class DummySigner final : public Signer {
     result.not_after = result.not_before + std::chrono::minutes(5);
     return result;
   }
+
+  SigningResult Renew(const RenewalSigningRequest& /*request*/) override {
+    SigningResult result;
+    result.certificate_serial = "unused-renew";
+    result.certificate_pem = "unused-renew";
+    result.not_before = std::chrono::system_clock::now();
+    result.not_after = result.not_before + std::chrono::minutes(5);
+    return result;
+  }
 };
 
 TEST(NotaryServerIntegrationTest, StartsWithTlsAndEnablesHealthService) {
