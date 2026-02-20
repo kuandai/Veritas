@@ -155,30 +155,36 @@ Implemented
   - startup key-material validation hooks (path checks, PEM parse, key/cert
     match),
   - OpenSSL CSR issuance path (signature verification, SAN/CN/key policy, TTL
-    clamp, key-usage/EKU extensions).
+    clamp, key-usage/EKU extensions),
+  - OpenSSL renewal path from existing leaf cert identity material.
 - `IssueCertificate` implementation is wired:
   - deterministic request validation (token, CSR, idempotency, minimum TTL),
   - authz enforcement via Gatekeeper token status,
   - signer invocation and leaf + chain response mapping,
   - issuance + idempotency persistence into shared store,
   - idempotent replay for duplicate request key + same token hash.
+- `RenewCertificate` implementation is wired:
+  - deterministic request validation (token, serial, idempotency, minimum TTL),
+  - overlap-window eligibility check (15-minute renewal boundary),
+  - active/non-revoked ownership checks via token-hash linkage,
+  - signer renewal invocation + persisted renewed record response,
+  - idempotent replay for duplicate key and conflict-after-write retry path.
 - Structured JSON event logging is available for startup and RPC-path events.
 - Unit/integration tests cover:
   - config validation and read-file behavior,
   - Gatekeeper token-status authorizer mapping and gRPC path,
-  - issue handler authz/validation/idempotency paths,
-  - signer validation + issuance policy paths,
+  - issue + renew authz/validation/idempotency/retry paths,
+  - signer validation + issuance + renewal policy paths,
   - startup success with health-service availability,
   - fail-closed startup on invalid signer material,
   - shared issuance store record/idempotency/revocation behavior.
 
 Placeholders / incomplete
-- `RenewCertificate` and `RevokeCertificate` still return
-  `FAILED_PRECONDITION` after successful authz.
+- `RevokeCertificate` still returns `FAILED_PRECONDITION` after successful authz.
 - `GetCertificateStatus` remains a placeholder handler.
 
 Aspirational
-- Full renewal/revocation/status lifecycle implementation.
+- Full revocation/status lifecycle implementation.
 
 ### services/gatekeeper (SASL service)
 

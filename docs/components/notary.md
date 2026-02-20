@@ -15,8 +15,10 @@ authenticated authorization context.
   - `notary_service.*`:
     - `IssueCertificate` enforces request validation + authz, invokes signer,
       persists issuance/idempotency data, and returns leaf + chain material.
-    - `RenewCertificate` and `RevokeCertificate` currently enforce authz then
-      return explicit placeholder status.
+    - `RenewCertificate` enforces request validation + authz, overlap-window
+      policy, signer renewal, and idempotent persistence semantics.
+    - `RevokeCertificate` currently enforces authz then returns explicit
+      placeholder status.
     - `GetCertificateStatus` currently returns placeholder status.
   - `log_utils.*`: JSON-structured event logging for startup/RPC events.
   - `tls_utils.*`: startup TLS cert/key format and match validation.
@@ -29,11 +31,12 @@ authenticated authorization context.
   consistency.
 - PKI policy baseline is defined in `docs/architecture/notary-pki-policy.md`.
 - Signer abstraction is present in `services/notary/src/signer.*` with
-  fail-closed key-material validation hooks and OpenSSL issuance path:
+  fail-closed key-material validation hooks and OpenSSL issuance/renewal paths:
   - CSR parse/signature verification,
   - SAN/CN/key-policy checks,
   - bounded TTL enforcement,
-  - leaf signing with key-usage/EKU extensions,
+  - leaf signing/renewal with key-usage/EKU extensions,
+  - renewal from existing certificate identity material (subject + SAN + key),
   - chain payload passthrough from configured issuer chain file.
 - Health/readiness baseline:
   - default gRPC health service is enabled during startup,
@@ -44,7 +47,7 @@ authenticated authorization context.
   - `NOTARY_GATEKEEPER_ALLOW_INSECURE=true` allows insecure transport only when
     explicitly set.
 - Mutating RPC authorization mapping:
-  - token state `ACTIVE` -> continue to issuance placeholder,
+  - token state `ACTIVE` -> continue to issue/renew policy path,
   - token state `REVOKED` -> `PERMISSION_DENIED`,
   - token state `UNKNOWN` / `UNSPECIFIED` -> `UNAUTHENTICATED`,
   - Gatekeeper `UNAVAILABLE` -> `UNAVAILABLE` (fail closed),
@@ -54,10 +57,15 @@ authenticated authorization context.
   - `NOTARY_STORE_URI` is required for Redis backend,
   - issuance records persist serial, cert payload, token hash linkage, and
     idempotency key mapping.
+- Renewal policy baseline:
+  - overlap window enforced before renewal (`15m` from expiry boundary),
+  - active/non-revoked record required,
+  - token-hash ownership match required,
+  - idempotency replay on duplicate renewal key.
 
 ## Placeholders / incomplete
 
-- Renewal/revocation/status lifecycle handlers are placeholders.
+- Revocation/status lifecycle handlers are placeholders.
 - Revocation and status-plane read paths are not implemented.
 
 ## Aspirational
