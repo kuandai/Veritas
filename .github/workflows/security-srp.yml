@@ -86,6 +86,39 @@ jobs:
       - name: Run revocation integration suite
         run: ctest --test-dir build --output-on-failure -R veritas_libveritas_tests
 
+  notary-lifecycle:
+    runs-on: ubuntu-24.04
+    env:
+      CONAN_HOME: ${{ github.workspace }}/.conan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Conan
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "conan>=2.0,<3.0"
+
+      - name: Bootstrap Conan recipes
+        run: ./scripts/bootstrap.sh
+
+      - name: Generate lockfile
+        run: ./scripts/lock.sh
+
+      - name: Build with proto tests enabled
+        env:
+          VERITAS_ENABLE_PROTO_TESTS: ON
+          BUILD_TYPE: Debug
+        run: ./scripts/build.sh
+
+      - name: Run notary lifecycle suite
+        run: ctest --test-dir build --output-on-failure -R veritas_notary_tests
+
   tsan-nightly:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
@@ -122,5 +155,5 @@ jobs:
       - name: Build TSAN targets
         run: cmake --build build_tsan --parallel
 
-      - name: Run TSAN lifecycle/session tests
-        run: ctest --test-dir build_tsan --output-on-failure -R "veritas_gatekeeper_tests|veritas_libveritas_tests"
+      - name: Run TSAN lifecycle/session/notary tests
+        run: ctest --test-dir build_tsan --output-on-failure -R "veritas_gatekeeper_tests|veritas_libveritas_tests|veritas_notary_tests"
