@@ -34,6 +34,7 @@ if(VERITAS_ENABLE_PROTO_TESTS)
   find_package(cyrus-sasl REQUIRED CONFIG)
   list(APPEND VERITAS_TEST_SOURCES
     gatekeeper/sasl_server_test.cpp
+    protocol/notary_proto_contract_test.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/sasl_server.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/session_cache.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_store.cpp

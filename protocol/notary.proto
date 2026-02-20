@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package veritas.notary.v1;
+
+import "google/protobuf/timestamp.proto";
+
+enum NotaryErrorCode {
+  NOTARY_ERROR_CODE_UNSPECIFIED = 0;
+  NOTARY_ERROR_CODE_INVALID_REQUEST = 1;
+  NOTARY_ERROR_CODE_UNAUTHORIZED = 2;
+  NOTARY_ERROR_CODE_TOKEN_INVALID = 3;
+  NOTARY_ERROR_CODE_TOKEN_EXPIRED = 4;
+  NOTARY_ERROR_CODE_TOKEN_REVOKED = 5;
+  NOTARY_ERROR_CODE_POLICY_DENIED = 6;
+  NOTARY_ERROR_CODE_ALREADY_REVOKED = 7;
+  NOTARY_ERROR_CODE_RATE_LIMITED = 8;
+  NOTARY_ERROR_CODE_TEMPORARILY_UNAVAILABLE = 9;
+  NOTARY_ERROR_CODE_INTERNAL = 10;
+}
+
+message NotaryErrorDetail {
+  NotaryErrorCode code = 1;
+  string detail = 2;
+}
+
+enum CertificateStatusState {
+  CERTIFICATE_STATUS_STATE_UNSPECIFIED = 0;
+  CERTIFICATE_STATUS_STATE_ACTIVE = 1;
+  CERTIFICATE_STATUS_STATE_REVOKED = 2;
+  CERTIFICATE_STATUS_STATE_EXPIRED = 3;
+  CERTIFICATE_STATUS_STATE_UNKNOWN = 4;
+}
+
+message IssueCertificateRequest {
+  bytes refresh_token = 1;
+  bytes csr_der = 2;
+  uint32 requested_ttl_seconds = 3;
+  string idempotency_key = 4;
+}
+
+message IssueCertificateResponse {
+  bool issued = 1;
+  string certificate_pem = 2;
+  string certificate_chain_pem = 3;
+  string certificate_serial = 4;
+  google.protobuf.Timestamp not_before = 5;
+  google.protobuf.Timestamp not_after = 6;
+  NotaryErrorDetail error = 7;
+}
+
+message RenewCertificateRequest {
+  bytes refresh_token = 1;
+  string certificate_serial = 2;
+  uint32 requested_ttl_seconds = 3;
+  string idempotency_key = 4;
+}
+
+message RenewCertificateResponse {
+  bool renewed = 1;
+  string certificate_pem = 2;
+  string certificate_chain_pem = 3;
+  string certificate_serial = 4;
+  google.protobuf.Timestamp not_before = 5;
+  google.protobuf.Timestamp not_after = 6;
+  NotaryErrorDetail error = 7;
+}
+
+message RevokeCertificateRequest {
+  bytes refresh_token = 1;
+  string certificate_serial = 2;
+  string reason = 3;
+  string actor = 4;
+}
+
+message RevokeCertificateResponse {
+  bool revoked = 1;
+  google.protobuf.Timestamp revoked_at = 2;
+  NotaryErrorDetail error = 3;
+}
+
+message GetCertificateStatusRequest {
+  string certificate_serial = 1;
+}
+
+message GetCertificateStatusResponse {
+  CertificateStatusState state = 1;
+  string reason = 2;
+  google.protobuf.Timestamp not_before = 3;
+  google.protobuf.Timestamp not_after = 4;
+  google.protobuf.Timestamp revoked_at = 5;
+  NotaryErrorDetail error = 6;
+}
+
+service Notary {
+  rpc IssueCertificate(IssueCertificateRequest) returns (IssueCertificateResponse);
+  rpc RenewCertificate(RenewCertificateRequest) returns (RenewCertificateResponse);
+  rpc RevokeCertificate(RevokeCertificateRequest) returns (RevokeCertificateResponse);
+  rpc GetCertificateStatus(GetCertificateStatusRequest) returns (GetCertificateStatusResponse);
+}

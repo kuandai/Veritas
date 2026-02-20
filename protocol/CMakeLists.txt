@@ -1,6 +1,7 @@
 set(VERITAS_PROTO_FILES
   ${CMAKE_CURRENT_SOURCE_DIR}/identity.proto
   ${CMAKE_CURRENT_SOURCE_DIR}/gatekeeper.proto
+  ${CMAKE_CURRENT_SOURCE_DIR}/notary.proto
 )
 
 find_package(protobuf REQUIRED CONFIG)
