@@ -109,6 +109,7 @@ class InMemoryIssuanceStore final : public IssuanceStore {
 
   void Revoke(const std::string& certificate_serial,
               const std::string& reason,
+              const std::string& actor,
               std::chrono::system_clock::time_point revoked_at) override {
     std::lock_guard<std::mutex> lock(mutex_);
     const auto it = records_by_serial_.find(certificate_serial);
@@ -118,6 +119,7 @@ class InMemoryIssuanceStore final : public IssuanceStore {
     }
     it->second.state = IssuanceState::Revoked;
     it->second.revoke_reason = reason;
+    it->second.revoke_actor = actor;
     it->second.revoked_at = revoked_at;
   }
 
@@ -185,6 +187,7 @@ class RedisIssuanceStore final : public IssuanceStore {
       fields.emplace("expires_at", std::to_string(ToUnixSeconds(record.expires_at)));
       fields.emplace("state", ToString(record.state));
       fields.emplace("revoke_reason", record.revoke_reason);
+      fields.emplace("revoke_actor", record.revoke_actor);
       fields.emplace("revoked_at", std::to_string(ToUnixSeconds(record.revoked_at)));
       redis_.hset(IssuanceKey(record.certificate_serial), fields.begin(),
                   fields.end());
@@ -217,6 +220,7 @@ class RedisIssuanceStore final : public IssuanceStore {
       record.expires_at = FromUnixSecondsString(fields["expires_at"]);
       record.state = ParseState(fields["state"]);
       record.revoke_reason = fields["revoke_reason"];
+      record.revoke_actor = fields["revoke_actor"];
       record.revoked_at = FromUnixSecondsString(fields["revoked_at"]);
       return record;
     } catch (const sw::redis::Error& ex) {
@@ -267,6 +271,7 @@ class RedisIssuanceStore final : public IssuanceStore {
 
   void Revoke(const std::string& certificate_serial,
               const std::string& reason,
+              const std::string& actor,
               std::chrono::system_clock::time_point revoked_at) override {
     try {
       if (!redis_.exists(IssuanceKey(certificate_serial))) {
@@ -275,6 +280,7 @@ class RedisIssuanceStore final : public IssuanceStore {
       }
       redis_.hset(IssuanceKey(certificate_serial), "state", "revoked");
       redis_.hset(IssuanceKey(certificate_serial), "revoke_reason", reason);
+      redis_.hset(IssuanceKey(certificate_serial), "revoke_actor", actor);
       redis_.hset(IssuanceKey(certificate_serial), "revoked_at",
                   std::to_string(ToUnixSeconds(revoked_at)));
     } catch (const SharedStoreError&) {
@@ -323,6 +329,7 @@ class RedisIssuanceStore final : public IssuanceStore {
   }
   void Revoke(const std::string& /*certificate_serial*/,
               const std::string& /*reason*/,
+              const std::string& /*actor*/,
               std::chrono::system_clock::time_point /*revoked_at*/) override {
     throw SharedStoreError(SharedStoreError::Kind::Unavailable,
                            "Redis support is disabled");

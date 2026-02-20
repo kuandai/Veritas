@@ -34,6 +34,7 @@ struct IssuanceRecord {
   std::chrono::system_clock::time_point expires_at{};
   IssuanceState state = IssuanceState::Active;
   std::string revoke_reason;
+  std::string revoke_actor;
   std::chrono::system_clock::time_point revoked_at{};
 };
 
@@ -69,6 +70,7 @@ class IssuanceStore {
       const std::string& idempotency_key) = 0;
   virtual void Revoke(const std::string& certificate_serial,
                       const std::string& reason,
+                      const std::string& actor,
                       std::chrono::system_clock::time_point revoked_at) = 0;
 };
 
