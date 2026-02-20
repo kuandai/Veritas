@@ -21,6 +21,9 @@ authenticated authorization context.
       persists revocation reason/actor/timestamp metadata.
     - `GetCertificateStatus` returns active/revoked/expired/unknown lifecycle
       state from persisted issuance records.
+  - `security_controls.*`:
+    - fixed-window per-peer request rate limiting for issue/renew/revoke/status,
+    - in-memory security event counters for future policy/lockout analytics.
   - `log_utils.*`: JSON-structured event logging for startup/RPC events.
   - `tls_utils.*`: startup TLS cert/key format and match validation.
 - Sprint 1 contract freeze is defined in `protocol/notary.proto`:
@@ -67,12 +70,19 @@ authenticated authorization context.
   - revoke requires `reason` and `actor`,
   - repeated revoke returns deterministic already-revoked error,
   - status lookup returns state + validity window + revocation metadata.
+- Abuse-control hardening:
+  - mutating and status RPC paths enforce per-peer rate limits,
+  - request-size bounds enforced on token/csr/serial/idempotency/reason/actor
+    fields,
+  - security counters track key events (`rate_limited`, `authz_failure`,
+    `validation_failure`, `policy_denied`) for future lockout policy work.
 
 ## Placeholders / incomplete
 
 - Revocation reason taxonomy enforcement is not yet normalized beyond required
   non-empty `reason` + `actor` fields.
 - Status API currently has no caller-auth policy gate.
+- Rate-limit thresholds are code-level defaults (runtime tuning not yet wired).
 
 ## Aspirational
 

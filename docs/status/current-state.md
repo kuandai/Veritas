@@ -178,11 +178,17 @@ Implemented
   - serial lookup against shared issuance store,
   - lifecycle mapping to active/revoked/expired/unknown states,
   - revocation reason/timestamp return for revoked records.
+- Security hardening controls are wired in Notary runtime:
+  - fixed-window per-peer rate limiting on issue/renew/revoke/status paths,
+  - request-size limits for token/csr/serial/idempotency/reason/actor fields,
+  - in-memory security counters (`rate_limited`, `authz_failure`,
+    `validation_failure`, `policy_denied`) for future analytics/lockout policy.
 - Structured JSON event logging is available for startup and RPC-path events.
 - Unit/integration tests cover:
   - config validation and read-file behavior,
   - Gatekeeper token-status authorizer mapping and gRPC path,
   - issue + renew + revoke authz/validation/idempotency/retry paths,
+  - rate-limit and malicious oversized-input rejection behavior,
   - lifecycle status-state mapping (active/revoked/expired/unknown),
   - signer validation + issuance + renewal policy paths,
   - startup success with health-service availability,
@@ -193,9 +199,10 @@ Implemented
 Placeholders / incomplete
 - Revocation reason taxonomy is not enforced beyond non-empty fields.
 - Status API does not currently enforce caller authz policy.
+- Rate-limit/counter configuration is not yet exposed as runtime config.
 
 Aspirational
-- Revocation/status API policy hardening and richer query/filter capabilities.
+- Runtime-tunable abuse-control policy and exportable security metrics.
 
 ### services/gatekeeper (SASL service)
 
