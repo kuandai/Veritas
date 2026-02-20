@@ -108,9 +108,18 @@ Aspirational
 
 Implemented
 - `veritas_shared` exposes a build-id helper.
+- Shared issuance store abstraction is implemented:
+  - issuance record model and storage interface,
+  - token-hash to certificate-serial linkage,
+  - idempotency registration/lookup semantics,
+  - revocation-state updates.
+- Backends:
+  - in-memory (thread-safe),
+  - Redis (with explicit unavailable errors when Redis support is disabled).
 
 Placeholders / incomplete
-- No shared data access layer.
+- Notary runtime is not yet wired to use shared issuance persistence.
+- Gatekeeper token-store implementation is still service-local.
 
 Aspirational
 - Shared DB access, token store adapters, and metrics/logging utilities.
