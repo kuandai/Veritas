@@ -182,6 +182,7 @@ if(VERITAS_ENABLE_PROTO_TESTS)
     notary/config_test.cpp
     notary/signer_test.cpp
     notary/server_integration_test.cpp
+    shared/issuance_store_test.cpp
     ${CMAKE_SOURCE_DIR}/services/notary/src/config.cpp
     ${CMAKE_SOURCE_DIR}/services/notary/src/log_utils.cpp
     ${CMAKE_SOURCE_DIR}/services/notary/src/notary_service.cpp
@@ -202,6 +203,7 @@ if(VERITAS_ENABLE_PROTO_TESTS)
     PRIVATE
       GTest::gtest
       OpenSSL::Crypto
+      veritas_shared
       veritas_protocol
       protobuf::libprotobuf
       gRPC::grpc++
