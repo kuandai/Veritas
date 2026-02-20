@@ -16,7 +16,6 @@ set(VERITAS_TEST_SOURCES
   gatekeeper/tls_utils_test.cpp
   gatekeeper/token_store_test.cpp
   gatekeeper/token_utils_test.cpp
-  notary/signer_test.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/auth_metrics.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/config.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/fake_salt.cpp
@@ -27,7 +26,6 @@ set(VERITAS_TEST_SOURCES
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/tls_utils.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_store.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_utils.cpp
-  ${CMAKE_SOURCE_DIR}/services/notary/src/signer.cpp
 )
 
 if(VERITAS_ENABLE_PROTO_TESTS)
@@ -48,7 +46,6 @@ add_executable(veritas_gatekeeper_tests ${VERITAS_TEST_SOURCES})
 target_include_directories(veritas_gatekeeper_tests
   PRIVATE
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src
-    ${CMAKE_SOURCE_DIR}/services/notary/src
     ${CMAKE_BINARY_DIR}/protocol
 )
 
@@ -179,6 +176,44 @@ if(VERITAS_ENABLE_PROTO_TESTS)
 
   add_dependencies(veritas_libveritas_tests veritas_protocol)
   add_test(NAME veritas_libveritas_tests COMMAND veritas_libveritas_tests)
+
+  set(VERITAS_NOTARY_TEST_SOURCES
+    main.cpp
+    notary/config_test.cpp
+    notary/signer_test.cpp
+    notary/server_integration_test.cpp
+    ${CMAKE_SOURCE_DIR}/services/notary/src/config.cpp
+    ${CMAKE_SOURCE_DIR}/services/notary/src/log_utils.cpp
+    ${CMAKE_SOURCE_DIR}/services/notary/src/notary_service.cpp
+    ${CMAKE_SOURCE_DIR}/services/notary/src/server.cpp
+    ${CMAKE_SOURCE_DIR}/services/notary/src/signer.cpp
+    ${CMAKE_SOURCE_DIR}/services/notary/src/tls_utils.cpp
+  )
+
+  add_executable(veritas_notary_tests ${VERITAS_NOTARY_TEST_SOURCES})
+
+  target_include_directories(veritas_notary_tests
+    PRIVATE
+      ${CMAKE_SOURCE_DIR}/services/notary/src
+      ${CMAKE_BINARY_DIR}/protocol
+  )
+
+  target_link_libraries(veritas_notary_tests
+    PRIVATE
+      GTest::gtest
+      OpenSSL::Crypto
+      veritas_protocol
+      protobuf::libprotobuf
+      gRPC::grpc++
+  )
+
+  target_compile_features(veritas_notary_tests
+    PRIVATE
+      cxx_std_20
+  )
+
+  add_dependencies(veritas_notary_tests veritas_protocol)
+  add_test(NAME veritas_notary_tests COMMAND veritas_notary_tests)
 
   if(VERITAS_ENABLE_REDIS_INTEGRATION_TESTS)
     find_package(redis++ REQUIRED CONFIG)
