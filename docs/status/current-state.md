@@ -120,10 +120,18 @@ Implemented
 - Minimal CLI that prints the shared build id.
 - Notary Sprint 1 trust model document exists:
   `docs/architecture/notary-threat-model.md`.
+- Notary PKI policy baseline exists:
+  `docs/architecture/notary-pki-policy.md`.
 - Notary v1 RPC contract is frozen in `protocol/notary.proto`.
+- Signer abstraction exists in `services/notary/src/signer.*` with startup
+  key-material validation hooks:
+  - required path checks,
+  - PEM parse checks,
+  - certificate/private-key match checks.
 
 Placeholders / incomplete
 - No notary logic implemented.
+- OpenSSL signer issuance method is a placeholder (not implemented).
 
 Aspirational
 - Notary service with shared token store integration.

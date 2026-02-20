@@ -15,11 +15,15 @@ authenticated authorization context.
   - `GetCertificateStatus`
 - Notary error/status enums are frozen in the proto contract for implementation
   consistency.
+- PKI policy baseline is defined in `docs/architecture/notary-pki-policy.md`.
+- Signer abstraction is present in `services/notary/src/signer.*` with
+  fail-closed key-material validation hooks (path checks, PEM parse, key/cert
+  match).
 
 ## Placeholders / incomplete
 
 - No notary logic implemented.
-- No signer implementation or key loading.
+- Signer `Issue(...)` path is a placeholder and intentionally not implemented.
 - No Gatekeeper authorization integration.
 - No issuance persistence layer.
 
