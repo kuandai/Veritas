@@ -111,6 +111,11 @@ class ConflictAfterWriteStore final : public veritas::shared::IssuanceStore {
   bool enabled_once_ = false;
 };
 
+class DenyRateLimiter final : public RateLimiter {
+ public:
+  bool Allow(std::string_view /*key*/) override { return false; }
+};
+
 void SeedIssuedCertificate(NotaryServiceImpl* service, FakeSigner* signer,
                            const std::string& token,
                            const std::string& serial,
@@ -176,6 +181,49 @@ TEST(NotaryServiceTest, IssueCertificateRejectsInvalidRequest) {
   EXPECT_EQ(response.error().code(),
             veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST);
   EXPECT_EQ(signer->issue_calls(), 0);
+}
+
+TEST(NotaryServiceTest, IssueCertificateRejectsOversizedPayloads) {
+  auto authorizer = std::make_shared<FixedAuthorizer>(grpc::Status::OK);
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  NotaryServiceImpl service(authorizer, signer, store);
+
+  grpc::ServerContext context;
+  veritas::notary::v1::IssueCertificateRequest request;
+  veritas::notary::v1::IssueCertificateResponse response;
+  request.set_refresh_token("token");
+  request.set_csr_der(std::string(70 * 1024, 'a'));
+  request.set_requested_ttl_seconds(600);
+  request.set_idempotency_key("idem-1");
+
+  const auto status = service.IssueCertificate(&context, &request, &response);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(response.error().code(),
+            veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST);
+}
+
+TEST(NotaryServiceTest, IssueCertificateRateLimitingRecordsMetric) {
+  auto authorizer = std::make_shared<FixedAuthorizer>(grpc::Status::OK);
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  auto limiter = std::make_shared<DenyRateLimiter>();
+  auto metrics = std::make_shared<InMemorySecurityMetrics>();
+  NotaryServiceImpl service(authorizer, signer, store, limiter, metrics);
+
+  grpc::ServerContext context;
+  veritas::notary::v1::IssueCertificateRequest request;
+  veritas::notary::v1::IssueCertificateResponse response;
+  request.set_refresh_token("token");
+  request.set_csr_der("csr");
+  request.set_requested_ttl_seconds(600);
+  request.set_idempotency_key("idem-1");
+
+  const auto status = service.IssueCertificate(&context, &request, &response);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::RESOURCE_EXHAUSTED);
+  EXPECT_EQ(response.error().code(),
+            veritas::notary::v1::NOTARY_ERROR_CODE_RATE_LIMITED);
+  EXPECT_EQ(metrics->Get("rate_limited"), 1U);
 }
 
 TEST(NotaryServiceTest, IssueCertificatePersistsAndReturnsIssuedRecord) {

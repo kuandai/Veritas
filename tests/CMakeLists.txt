@@ -189,6 +189,7 @@ if(VERITAS_ENABLE_PROTO_TESTS)
     ${CMAKE_SOURCE_DIR}/services/notary/src/config.cpp
     ${CMAKE_SOURCE_DIR}/services/notary/src/log_utils.cpp
     ${CMAKE_SOURCE_DIR}/services/notary/src/notary_service.cpp
+    ${CMAKE_SOURCE_DIR}/services/notary/src/security_controls.cpp
     ${CMAKE_SOURCE_DIR}/services/notary/src/server.cpp
     ${CMAKE_SOURCE_DIR}/services/notary/src/signer.cpp
     ${CMAKE_SOURCE_DIR}/services/notary/src/token_hash.cpp
