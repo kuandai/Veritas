@@ -68,8 +68,13 @@ authenticated authorization context.
   - idempotency replay on duplicate renewal key.
 - Revocation/status behavior:
   - revoke requires `reason` and `actor`,
+  - revoke `reason` must be one of:
+    `TOKEN_REVOKED`, `KEY_COMPROMISE`, `CA_COMPROMISE`,
+    `AFFILIATION_CHANGED`, `SUPERSEDED`, `CESSATION_OF_OPERATION`,
+    `PRIVILEGE_WITHDRAWN`, `POLICY_VIOLATION`,
   - repeated revoke returns deterministic already-revoked error,
-  - status lookup returns state + validity window + revocation metadata.
+  - status lookup requires `refresh_token` and validates authz + token
+    ownership before returning state + validity window + revocation metadata.
 - Abuse-control hardening:
   - mutating and status RPC paths enforce per-peer rate limits,
   - request-size bounds enforced on token/csr/serial/idempotency/reason/actor
@@ -83,9 +88,6 @@ authenticated authorization context.
 
 ## Placeholders / incomplete
 
-- Revocation reason taxonomy enforcement is not yet normalized beyond required
-  non-empty `reason` + `actor` fields.
-- Status API currently has no caller-auth policy gate.
 - Rate-limit thresholds are code-level defaults (runtime tuning not yet wired).
 
 ## Aspirational

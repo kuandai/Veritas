@@ -178,10 +178,14 @@ Implemented
   - idempotent replay for duplicate key and conflict-after-write retry path.
 - `RevokeCertificate` implementation is wired:
   - deterministic request validation (token, serial, reason, actor),
+  - reason taxonomy validation against constrained revocation codes,
   - authz + ownership checks,
   - revocation persistence with reason/actor/timestamp metadata,
   - deterministic already-revoked response mapping.
 - `GetCertificateStatus` implementation is wired:
+  - deterministic request validation (serial + refresh token),
+  - authz enforcement via Gatekeeper token status,
+  - token-hash ownership checks before state return,
   - serial lookup against shared issuance store,
   - lifecycle mapping to active/revoked/expired/unknown states,
   - revocation reason/timestamp return for revoked records.
@@ -204,8 +208,6 @@ Implemented
     revocation actor metadata.
 
 Placeholders / incomplete
-- Revocation reason taxonomy is not enforced beyond non-empty fields.
-- Status API does not currently enforce caller authz policy.
 - Rate-limit/counter configuration is not yet exposed as runtime config.
 
 Aspirational

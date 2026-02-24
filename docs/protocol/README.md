@@ -25,11 +25,22 @@ Gatekeeper payload semantics (current implementation):
 - `GetTokenStatusResponse.state` reports token lifecycle status:
   `ACTIVE`, `REVOKED`, or `UNKNOWN`.
 
-Notary payload semantics (contract freeze, implementation pending):
+Notary payload semantics (current implementation):
 - `IssueCertificateRequest` and `RenewCertificateRequest` carry
   `refresh_token`, requested lifetime, and `idempotency_key`.
 - `RevokeCertificateRequest` carries `refresh_token`, target certificate serial,
-  revocation reason, and actor context.
+  revocation reason code, and actor context.
+- Revocation reason codes currently accepted:
+  - `TOKEN_REVOKED`
+  - `KEY_COMPROMISE`
+  - `CA_COMPROMISE`
+  - `AFFILIATION_CHANGED`
+  - `SUPERSEDED`
+  - `CESSATION_OF_OPERATION`
+  - `PRIVILEGE_WITHDRAWN`
+  - `POLICY_VIOLATION`
+- `GetCertificateStatusRequest` carries `certificate_serial` and
+  `refresh_token` for authz + ownership checks.
 - `GetCertificateStatusResponse.state` reports lifecycle state:
   `ACTIVE`, `REVOKED`, `EXPIRED`, or `UNKNOWN`.
 - `NotaryErrorDetail` + `NotaryErrorCode` define service-level structured error
@@ -38,11 +49,8 @@ Notary payload semantics (contract freeze, implementation pending):
 ## Placeholders / incomplete
 
 - `identity.proto` is explicitly a placeholder.
-- `notary.proto` is a frozen contract only; no server-side behavior is
-  implemented yet.
 - Cross-service protocol version negotiation is not implemented.
 
 ## Aspirational
 
-- Complete identity and notary runtime implementations behind the frozen
-  protocol contracts.
+- Complete identity protocol and version-negotiated cross-service contracts.
