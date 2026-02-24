@@ -250,7 +250,8 @@ Implemented
     auth requires both `cert` and `key`).
 
 Placeholders / incomplete
-- SASL verifier provisioning depends on external sasldb/auxprop setup.
+- SASL verifier provisioning depends on sasldb/auxprop setup in target
+  environments (scripted local provisioning is available).
 - `BeginAuth` returns mechanism-generated challenge bytes for real users;
   strict constant-size envelope encoding is not implemented.
 - Rate-limiter and analytics key caps use code-level defaults; runtime tuning
@@ -275,7 +276,7 @@ Aspirational
 
 ## Cross-cutting gaps (incomplete)
 
-- SASL verifier provisioning (still external sasldb/auxprop tooling).
+- SASL verifier provisioning still relies on sasldb/auxprop backend availability.
 - Shared storage layer and cross-service integration.
 - External Redis TLS connectivity validation requires a provisioned test endpoint.
 - Release transport policy gates were validated in `build_release` via:

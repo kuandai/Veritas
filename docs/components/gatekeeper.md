@@ -75,6 +75,8 @@ discovery; set it to the same `lib/sasl2` directory when running clients.
 For SRP, set `SASL_REALM` and ensure the client authid is realm-qualified
 (`user@realm`); the client library now appends `@<realm>` automatically when
 `SASL_REALM` is set.
+Use `scripts/provision_sasl_user.sh` for reproducible SRP verifier
+provisioning into sasldb during local/staging setup.
 
 Redis token-store URIs:
 
@@ -85,8 +87,8 @@ Redis token-store URIs:
 
 ## Placeholders / incomplete
 
-- SASL SRP handshake depends on external SASL configuration (sasldb/auxprop);
-  verifier provisioning is not automated.
+- SASL SRP handshake depends on sasldb/auxprop backend configuration in the
+  target environment.
   Use the repo's custom Cyrus SASL recipe when provisioning users via
   `saslpasswd2` to avoid the upstream SRP `sasl_setpass` crash.
 - Rate-limiter and analytics key caps use code-level defaults; runtime tuning

@@ -58,6 +58,16 @@ realm-qualified (`user@realm`), matching the stored verifier.
 `veritas_gatekeeper.conf` when using a custom SASL config (not a direct
 file path).
 
+Provision SASL SRP users reproducibly with:
+
+```bash
+./scripts/provision_sasl_user.sh \
+  --username demo_user \
+  --password demo_password \
+  --sasldb /tmp/veritas_sasldb2 \
+  --sasl-realm veritas-test
+```
+
 ## 5. Packaging
 
 `scripts/package.sh` is currently a placeholder. Decide on a packaging target
