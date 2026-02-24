@@ -133,6 +133,8 @@ through the deterministic test harness:
 
 TSAN coverage is wired in CI as the `tsan-nightly` job in
 `.github/workflows/security-srp.yml` (nightly schedule + manual dispatch).
+The TSAN lane applies `tests/tsan-grpc.supp` to suppress known third-party
+gRPC EventEngine race reports so project-owned races remain actionable.
 For local ASAN/UBSAN checks:
 
 ```bash

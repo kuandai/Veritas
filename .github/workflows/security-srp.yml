@@ -156,4 +156,6 @@ jobs:
         run: cmake --build build_tsan --parallel
 
       - name: Run TSAN lifecycle/session/notary tests
+        env:
+          TSAN_OPTIONS: "suppressions=${{ github.workspace }}/tests/tsan-grpc.supp halt_on_error=1"
         run: ctest --test-dir build_tsan --output-on-failure -R "veritas_gatekeeper_tests|veritas_libveritas_tests|veritas_notary_tests"

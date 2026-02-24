@@ -1,0 +1,9 @@
+# Suppress known ThreadSanitizer races in upstream gRPC EventEngine internals.
+# These are third-party reports observed during server startup/shutdown paths.
+# Keep suppressions scoped to gRPC internals only.
+
+race:grpc_event_engine::experimental::Epoll1EventHandle::OrphanHandle
+race:grpc_event_engine::experimental::PosixEngineListenerImpl
+race:grpc_event_engine::experimental::ListenerSocketsContainer
+race:grpc_event_engine::experimental::ThreadInternalsPosix
+race:grpc_event_engine::experimental::PosixEngineClosure
