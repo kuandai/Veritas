@@ -50,6 +50,7 @@ enum class IdentityErrorCode {
   PersistenceFailure,
   EntropyUnavailable,
   AuthServerUnavailable,
+  NotaryRequestFailed,
 };
 
 class IdentityManagerError : public std::runtime_error {
@@ -81,6 +82,37 @@ struct GatekeeperClientConfig {
   bool allow_insecure = false;
   std::uint32_t protocol_major = 1;
   std::uint32_t protocol_minor = 0;
+};
+
+struct NotaryClientConfig {
+  std::string target;
+  std::string root_cert_pem;
+  bool allow_insecure = false;
+  std::uint32_t protocol_major = 1;
+  std::uint32_t protocol_minor = 0;
+};
+
+enum class CertificateStatusState {
+  Unknown,
+  Active,
+  Revoked,
+  Expired,
+};
+
+struct CertificateMaterial {
+  std::string certificate_serial;
+  std::string certificate_pem;
+  std::string certificate_chain_pem;
+  std::chrono::system_clock::time_point not_before;
+  std::chrono::system_clock::time_point not_after;
+};
+
+struct CertificateStatusResult {
+  CertificateStatusState state = CertificateStatusState::Unknown;
+  std::string reason;
+  std::chrono::system_clock::time_point not_before;
+  std::chrono::system_clock::time_point not_after;
+  std::chrono::system_clock::time_point revoked_at;
 };
 
 struct RotationPolicy {
@@ -164,6 +196,21 @@ class IdentityManager {
                           const std::string& password);
   AuthResult Authenticate(const GatekeeperClientConfig& config,
                           const std::string& username);
+  CertificateMaterial IssueCertificate(const NotaryClientConfig& config,
+                                       const std::string& csr_der,
+                                       std::uint32_t requested_ttl_seconds,
+                                       const std::string& idempotency_key);
+  CertificateMaterial RenewCertificate(const NotaryClientConfig& config,
+                                       const std::string& certificate_serial,
+                                       std::uint32_t requested_ttl_seconds,
+                                       const std::string& idempotency_key);
+  void RevokeCertificate(const NotaryClientConfig& config,
+                         const std::string& certificate_serial,
+                         const std::string& reason,
+                         const std::string& actor);
+  CertificateStatusResult GetCertificateStatus(
+      const NotaryClientConfig& config,
+      const std::string& certificate_serial);
   IdentityState GetState() const;
   IdentityErrorCode GetLastError() const;
   std::optional<AuthResult> GetPersistedIdentity() const;

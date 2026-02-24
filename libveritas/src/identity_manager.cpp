@@ -17,6 +17,7 @@
 
 #include "auth/auth_flow.h"
 #include "auth/gatekeeper_client.h"
+#include "notary/notary_client.h"
 
 namespace veritas {
 
@@ -214,6 +215,14 @@ double RandomUnit() {
   return distribution(generator);
 }
 
+std::string RequireRefreshToken(const std::optional<AuthResult>& identity) {
+  if (!identity.has_value() || identity->refresh_token.empty()) {
+    throw IdentityManagerError(IdentityErrorCode::AuthenticationFailed,
+                               "no authenticated identity is available");
+  }
+  return identity->refresh_token;
+}
+
 }  // namespace
 
 IdentityManager::IdentityManager(CredentialProvider credential_provider,
@@ -357,6 +366,125 @@ AuthResult IdentityManager::Authenticate(const GatekeeperClientConfig& config,
                                "credential provider is not configured");
   }
   return Authenticate(config, username, credential_provider_());
+}
+
+CertificateMaterial IdentityManager::IssueCertificate(
+    const NotaryClientConfig& config, const std::string& csr_der,
+    std::uint32_t requested_ttl_seconds, const std::string& idempotency_key) {
+  if (GetState() != IdentityState::Ready) {
+    SetLastError(IdentityErrorCode::InvalidStateTransition);
+    throw IdentityManagerError(IdentityErrorCode::InvalidStateTransition,
+                               "identity is not ready");
+  }
+
+  std::string refresh_token;
+  {
+    std::shared_lock lock(state_mutex_);
+    refresh_token = RequireRefreshToken(persisted_identity_);
+  }
+
+  try {
+    notary_client::NotaryClient client(config);
+    auto result = client.IssueCertificate(refresh_token, csr_der,
+                                          requested_ttl_seconds,
+                                          idempotency_key);
+    SetLastError(IdentityErrorCode::None);
+    return result;
+  } catch (const notary_client::NotaryClientError& ex) {
+    SetLastError(IdentityErrorCode::NotaryRequestFailed);
+    throw IdentityManagerError(IdentityErrorCode::NotaryRequestFailed, ex.what());
+  } catch (const std::exception& ex) {
+    SetLastError(IdentityErrorCode::NotaryRequestFailed);
+    throw IdentityManagerError(IdentityErrorCode::NotaryRequestFailed, ex.what());
+  }
+}
+
+CertificateMaterial IdentityManager::RenewCertificate(
+    const NotaryClientConfig& config, const std::string& certificate_serial,
+    std::uint32_t requested_ttl_seconds, const std::string& idempotency_key) {
+  if (GetState() != IdentityState::Ready) {
+    SetLastError(IdentityErrorCode::InvalidStateTransition);
+    throw IdentityManagerError(IdentityErrorCode::InvalidStateTransition,
+                               "identity is not ready");
+  }
+
+  std::string refresh_token;
+  {
+    std::shared_lock lock(state_mutex_);
+    refresh_token = RequireRefreshToken(persisted_identity_);
+  }
+
+  try {
+    notary_client::NotaryClient client(config);
+    auto result = client.RenewCertificate(refresh_token, certificate_serial,
+                                          requested_ttl_seconds,
+                                          idempotency_key);
+    SetLastError(IdentityErrorCode::None);
+    return result;
+  } catch (const notary_client::NotaryClientError& ex) {
+    SetLastError(IdentityErrorCode::NotaryRequestFailed);
+    throw IdentityManagerError(IdentityErrorCode::NotaryRequestFailed, ex.what());
+  } catch (const std::exception& ex) {
+    SetLastError(IdentityErrorCode::NotaryRequestFailed);
+    throw IdentityManagerError(IdentityErrorCode::NotaryRequestFailed, ex.what());
+  }
+}
+
+void IdentityManager::RevokeCertificate(const NotaryClientConfig& config,
+                                        const std::string& certificate_serial,
+                                        const std::string& reason,
+                                        const std::string& actor) {
+  if (GetState() != IdentityState::Ready) {
+    SetLastError(IdentityErrorCode::InvalidStateTransition);
+    throw IdentityManagerError(IdentityErrorCode::InvalidStateTransition,
+                               "identity is not ready");
+  }
+
+  std::string refresh_token;
+  {
+    std::shared_lock lock(state_mutex_);
+    refresh_token = RequireRefreshToken(persisted_identity_);
+  }
+
+  try {
+    notary_client::NotaryClient client(config);
+    client.RevokeCertificate(refresh_token, certificate_serial, reason, actor);
+    SetLastError(IdentityErrorCode::None);
+  } catch (const notary_client::NotaryClientError& ex) {
+    SetLastError(IdentityErrorCode::NotaryRequestFailed);
+    throw IdentityManagerError(IdentityErrorCode::NotaryRequestFailed, ex.what());
+  } catch (const std::exception& ex) {
+    SetLastError(IdentityErrorCode::NotaryRequestFailed);
+    throw IdentityManagerError(IdentityErrorCode::NotaryRequestFailed, ex.what());
+  }
+}
+
+CertificateStatusResult IdentityManager::GetCertificateStatus(
+    const NotaryClientConfig& config, const std::string& certificate_serial) {
+  if (GetState() != IdentityState::Ready) {
+    SetLastError(IdentityErrorCode::InvalidStateTransition);
+    throw IdentityManagerError(IdentityErrorCode::InvalidStateTransition,
+                               "identity is not ready");
+  }
+
+  std::string refresh_token;
+  {
+    std::shared_lock lock(state_mutex_);
+    refresh_token = RequireRefreshToken(persisted_identity_);
+  }
+
+  try {
+    notary_client::NotaryClient client(config);
+    auto result = client.GetCertificateStatus(refresh_token, certificate_serial);
+    SetLastError(IdentityErrorCode::None);
+    return result;
+  } catch (const notary_client::NotaryClientError& ex) {
+    SetLastError(IdentityErrorCode::NotaryRequestFailed);
+    throw IdentityManagerError(IdentityErrorCode::NotaryRequestFailed, ex.what());
+  } catch (const std::exception& ex) {
+    SetLastError(IdentityErrorCode::NotaryRequestFailed);
+    throw IdentityManagerError(IdentityErrorCode::NotaryRequestFailed, ex.what());
+  }
 }
 
 IdentityState IdentityManager::GetState() const {
