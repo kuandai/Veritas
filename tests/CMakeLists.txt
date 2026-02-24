@@ -34,6 +34,7 @@ if(VERITAS_ENABLE_PROTO_TESTS)
   find_package(cyrus-sasl REQUIRED CONFIG)
   list(APPEND VERITAS_TEST_SOURCES
     gatekeeper/sasl_server_test.cpp
+    protocol/identity_proto_contract_test.cpp
     protocol/notary_proto_contract_test.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/sasl_server.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/session_cache.cpp
@@ -222,6 +223,14 @@ if(VERITAS_ENABLE_PROTO_TESTS)
     PRIVATE
       cxx_std_20
   )
+
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    target_link_options(veritas_notary_tests
+      PRIVATE
+        -Wl,--no-keep-memory
+        -Wl,--reduce-memory-overheads
+    )
+  endif()
 
   add_dependencies(veritas_notary_tests veritas_protocol)
   add_test(NAME veritas_notary_tests COMMAND veritas_notary_tests)

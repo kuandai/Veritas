@@ -1,7 +1,30 @@
 syntax = "proto3";
 
-package veritas.protocol;
+package veritas.identity.v1;
 
-message Placeholder {
-  string note = 1;
+message ProtocolVersion {
+  uint32 major = 1;
+  uint32 minor = 2;
+}
+
+enum NegotiationResult {
+  NEGOTIATION_RESULT_UNSPECIFIED = 0;
+  NEGOTIATION_RESULT_ACCEPTED = 1;
+  NEGOTIATION_RESULT_DOWNGRADED = 2;
+  NEGOTIATION_RESULT_UNSUPPORTED = 3;
+  NEGOTIATION_RESULT_INVALID = 4;
+}
+
+message NegotiateRequest {
+  repeated ProtocolVersion supported_versions = 1;
+}
+
+message NegotiateResponse {
+  NegotiationResult result = 1;
+  ProtocolVersion selected_version = 2;
+  string detail = 3;
+}
+
+service Identity {
+  rpc Negotiate(NegotiateRequest) returns (NegotiateResponse);
 }
