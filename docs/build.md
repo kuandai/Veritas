@@ -145,7 +145,8 @@ This mode fails if SRP tests skip, and writes verification artifacts to:
 
 Use `scripts/test_redis_tls_integration.sh` to run the Redis TLS integration
 target. The script always validates fail-closed behavior for invalid `rediss://`
-configuration and can also validate real TLS connectivity.
+configuration and validates real TLS connectivity when
+`VERITAS_REDIS_TLS_URI` is set.
 
 ```bash
 VERITAS_REDIS_TLS_URI='rediss://user:pass@redis.example:6380/0?cacert=/path/ca.pem' \
@@ -153,6 +154,19 @@ VERITAS_REDIS_TLS_URI='rediss://user:pass@redis.example:6380/0?cacert=/path/ca.p
 ```
 
 If `VERITAS_REDIS_TLS_URI` is unset, the external-connectivity test is skipped.
+
+For deterministic local reproduction of the CI lane (ephemeral TLS Redis +
+both fail-closed and real-connectivity assertions), run:
+
+```bash
+./scripts/run_redis_tls_lane.sh
+```
+
+This requires Docker and OpenSSL. The script generates per-run ephemeral certs
+and a random Redis password under a temporary directory, starts a TLS-only
+Redis container, runs `scripts/test_redis_tls_integration.sh`, then cleans up.
+In GitHub Actions this path runs in job `redis-tls-integration` inside
+`.github/workflows/security-srp.yml`.
 
 ## 10. Gatekeeper + Demo Smoke Test
 

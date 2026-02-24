@@ -24,7 +24,13 @@ items.
 - CI workflow includes explicit notary coverage lanes:
   - `notary-lifecycle` (runs `veritas_notary_tests`),
   - `tsan-nightly` includes `veritas_notary_tests` in sanitizer scope.
+- CI workflow includes a dedicated Redis TLS lane:
+  - `redis-tls-integration` provisions an ephemeral TLS-only Redis endpoint and
+    runs `veritas_gatekeeper_redis_integration_tests` with
+    `VERITAS_REDIS_TLS_URI`.
 - Redis TLS integration test entrypoint is `scripts/test_redis_tls_integration.sh`.
+- Deterministic Redis TLS lane repro entrypoint is
+  `scripts/run_redis_tls_lane.sh`.
 - Local Gatekeeper/auth demo smoke test entrypoint is `scripts/smoke_auth_demo.sh`.
 - Local Notary lifecycle smoke test entrypoint is
   `scripts/smoke_notary_lifecycle.sh`.
@@ -286,8 +292,8 @@ Placeholders / incomplete
 - Integration tests cover SRP handshake happy path + invalid proof + client
   revocation lock propagation.
 - Redis TLS integration tests cover fail-closed behavior for invalid `rediss://`
-  configuration and optional external endpoint validation via
-  `VERITAS_REDIS_TLS_URI`.
+  configuration and real endpoint validation when `VERITAS_REDIS_TLS_URI` is
+  set.
 
 Aspirational
 - Streamlined SRP verifier provisioning and server-side rotation policy.
@@ -296,7 +302,9 @@ Aspirational
 ## Cross-cutting gaps (incomplete)
 
 - SASL verifier provisioning still relies on sasldb/auxprop backend availability.
-- External Redis TLS connectivity validation requires a provisioned test endpoint.
+- External Redis TLS connectivity validation requires either:
+  - a provisioned endpoint passed via `VERITAS_REDIS_TLS_URI`, or
+  - `scripts/run_redis_tls_lane.sh` (ephemeral local endpoint via Docker).
 - Release transport policy gates were validated in `build_release` via:
   `ConfigTest.LoadConfigRejectsSaslDisabled` and
   `GatekeeperClientTest.InsecureTransportPolicyMatchesBuildType`.

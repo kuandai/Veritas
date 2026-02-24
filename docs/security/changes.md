@@ -25,12 +25,13 @@ Deployment-impacting security behavior currently enforced in this repository.
 - Strict mode fails when SRP integration tests skip.
 - SRP verification artifacts (plugin discovery and test logs) are emitted under
   `build/security-artifacts/srp-strict`.
-- Redis TLS integration tests include fail-closed validation and optional
-  external endpoint connectivity validation.
+- Redis TLS integration tests include fail-closed validation and real TLS
+  connectivity validation in the dedicated CI lane
+  (`redis-tls-integration` in `.github/workflows/security-srp.yml`).
 
 ## Remaining operator responsibilities
 
 - Provision and protect SASL verifier storage (`sasldb`/auxprop backend).
 - Provide trusted Redis TLS CA material for `rediss://` deployment.
-- Run optional external Redis TLS connectivity tests in an environment with a
-  reachable TLS-enabled Redis endpoint.
+- For local pre-deploy confidence, run `./scripts/run_redis_tls_lane.sh` to
+  reproduce the CI Redis TLS validation path with ephemeral infrastructure.
