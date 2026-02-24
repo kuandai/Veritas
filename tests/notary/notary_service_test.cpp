@@ -592,6 +592,7 @@ TEST(NotaryServiceTest, GetCertificateStatusReturnsLifecycleStates) {
   veritas::notary::v1::GetCertificateStatusRequest active_request;
   veritas::notary::v1::GetCertificateStatusResponse active_response;
   active_request.set_certificate_serial("active-serial");
+  active_request.set_refresh_token("token");
   ASSERT_TRUE(
       service.GetCertificateStatus(&active_context, &active_request,
                                    &active_response)
@@ -603,6 +604,7 @@ TEST(NotaryServiceTest, GetCertificateStatusReturnsLifecycleStates) {
   veritas::notary::v1::GetCertificateStatusRequest expired_request;
   veritas::notary::v1::GetCertificateStatusResponse expired_response;
   expired_request.set_certificate_serial("expired-serial");
+  expired_request.set_refresh_token("token");
   ASSERT_TRUE(
       service.GetCertificateStatus(&expired_context, &expired_request,
                                    &expired_response)
@@ -614,6 +616,7 @@ TEST(NotaryServiceTest, GetCertificateStatusReturnsLifecycleStates) {
   veritas::notary::v1::GetCertificateStatusRequest revoked_request;
   veritas::notary::v1::GetCertificateStatusResponse revoked_response;
   revoked_request.set_certificate_serial("revoked-serial");
+  revoked_request.set_refresh_token("token");
   ASSERT_TRUE(
       service.GetCertificateStatus(&revoked_context, &revoked_request,
                                    &revoked_response)
@@ -626,6 +629,7 @@ TEST(NotaryServiceTest, GetCertificateStatusReturnsLifecycleStates) {
   veritas::notary::v1::GetCertificateStatusRequest unknown_request;
   veritas::notary::v1::GetCertificateStatusResponse unknown_response;
   unknown_request.set_certificate_serial("missing");
+  unknown_request.set_refresh_token("token");
   ASSERT_TRUE(
       service.GetCertificateStatus(&unknown_context, &unknown_request,
                                    &unknown_response)
@@ -694,6 +698,73 @@ TEST(NotaryServiceTest, RevokeCertificateRejectsMissingActorOrReason) {
       service.RevokeCertificate(&context_two, &request_two, &response_two)
           .error_code(),
       grpc::StatusCode::INVALID_ARGUMENT);
+
+  grpc::ServerContext context_three;
+  veritas::notary::v1::RevokeCertificateRequest request_three;
+  veritas::notary::v1::RevokeCertificateResponse response_three;
+  request_three.set_refresh_token("token");
+  request_three.set_certificate_serial("serial");
+  request_three.set_actor("unit-test");
+  request_three.set_reason("NOT_A_REAL_REASON");
+  EXPECT_EQ(
+      service.RevokeCertificate(&context_three, &request_three, &response_three)
+          .error_code(),
+      grpc::StatusCode::INVALID_ARGUMENT);
+}
+
+TEST(NotaryServiceTest, GetCertificateStatusRejectsMissingToken) {
+  auto authorizer = std::make_shared<FixedAuthorizer>(grpc::Status::OK);
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  NotaryServiceImpl service(authorizer, signer, store);
+
+  grpc::ServerContext context;
+  veritas::notary::v1::GetCertificateStatusRequest request;
+  veritas::notary::v1::GetCertificateStatusResponse response;
+  request.set_certificate_serial("serial");
+  const auto status = service.GetCertificateStatus(&context, &request, &response);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+  EXPECT_EQ(response.error().code(),
+            veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST);
+}
+
+TEST(NotaryServiceTest, GetCertificateStatusDeniesUnauthorizedToken) {
+  auto authorizer = std::make_shared<FixedAuthorizer>(
+      grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "invalid"));
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  NotaryServiceImpl service(authorizer, signer, store);
+
+  grpc::ServerContext context;
+  veritas::notary::v1::GetCertificateStatusRequest request;
+  veritas::notary::v1::GetCertificateStatusResponse response;
+  request.set_certificate_serial("serial");
+  request.set_refresh_token("token");
+  const auto status = service.GetCertificateStatus(&context, &request, &response);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::UNAUTHENTICATED);
+  EXPECT_EQ(response.error().code(),
+            veritas::notary::v1::NOTARY_ERROR_CODE_TOKEN_INVALID);
+}
+
+TEST(NotaryServiceTest, GetCertificateStatusDeniesTokenOwnershipMismatch) {
+  auto authorizer = std::make_shared<FixedAuthorizer>(grpc::Status::OK);
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  NotaryServiceImpl service(authorizer, signer, store);
+
+  const auto now = std::chrono::system_clock::now();
+  SeedIssuedCertificate(&service, signer.get(), "token-a", "serial-1", now,
+                        now + std::chrono::minutes(10), "issue-idem");
+
+  grpc::ServerContext context;
+  veritas::notary::v1::GetCertificateStatusRequest request;
+  veritas::notary::v1::GetCertificateStatusResponse response;
+  request.set_certificate_serial("serial-1");
+  request.set_refresh_token("token-b");
+  const auto status = service.GetCertificateStatus(&context, &request, &response);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::PERMISSION_DENIED);
+  EXPECT_EQ(response.error().code(),
+            veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED);
 }
 
 TEST(NotaryServiceTest, LifecycleIssueRenewRevokeStatus) {
@@ -749,6 +820,7 @@ TEST(NotaryServiceTest, LifecycleIssueRenewRevokeStatus) {
   veritas::notary::v1::GetCertificateStatusRequest active_status_request;
   veritas::notary::v1::GetCertificateStatusResponse active_status_response;
   active_status_request.set_certificate_serial("serial-renewed");
+  active_status_request.set_refresh_token("token");
   ASSERT_TRUE(service.GetCertificateStatus(&active_status_context,
                                            &active_status_request,
                                            &active_status_response)
@@ -772,6 +844,7 @@ TEST(NotaryServiceTest, LifecycleIssueRenewRevokeStatus) {
   veritas::notary::v1::GetCertificateStatusRequest revoked_status_request;
   veritas::notary::v1::GetCertificateStatusResponse revoked_status_response;
   revoked_status_request.set_certificate_serial("serial-renewed");
+  revoked_status_request.set_refresh_token("token");
   ASSERT_TRUE(service.GetCertificateStatus(&revoked_status_context,
                                            &revoked_status_request,
                                            &revoked_status_response)

@@ -1,6 +1,7 @@
 #include "notary_service.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <stdexcept>
@@ -24,6 +25,22 @@ constexpr size_t kMaxIdempotencyKeyBytes = 128;
 constexpr size_t kMaxSerialBytes = 128;
 constexpr size_t kMaxReasonBytes = 128;
 constexpr size_t kMaxActorBytes = 128;
+constexpr std::array<std::string_view, 8> kSupportedRevocationReasons = {
+    "TOKEN_REVOKED",
+    "KEY_COMPROMISE",
+    "CA_COMPROMISE",
+    "AFFILIATION_CHANGED",
+    "SUPERSEDED",
+    "CESSATION_OF_OPERATION",
+    "PRIVILEGE_WITHDRAWN",
+    "POLICY_VIOLATION",
+};
+
+bool IsSupportedRevocationReason(std::string_view reason) {
+  return std::find(kSupportedRevocationReasons.begin(),
+                   kSupportedRevocationReasons.end(),
+                   reason) != kSupportedRevocationReasons.end();
+}
 
 void SetError(veritas::notary::v1::NotaryErrorDetail* error,
               veritas::notary::v1::NotaryErrorCode code,
@@ -305,6 +322,31 @@ grpc::Status MapAuthzStatusToRevokeStatus(
       "authorization failed");
 }
 
+grpc::Status MapAuthzStatusToStatusReadError(
+    const grpc::Status& status,
+    veritas::notary::v1::GetCertificateStatusResponse* response) {
+  if (status.error_code() == grpc::StatusCode::PERMISSION_DENIED) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_TOKEN_REVOKED,
+        "refresh token is revoked");
+  }
+  if (status.error_code() == grpc::StatusCode::UNAVAILABLE) {
+    return StatusWithNotaryError(
+        response,
+        veritas::notary::v1::NOTARY_ERROR_CODE_TEMPORARILY_UNAVAILABLE,
+        "gatekeeper is unavailable");
+  }
+  if (status.error_code() == grpc::StatusCode::INVALID_ARGUMENT ||
+      status.error_code() == grpc::StatusCode::UNAUTHENTICATED) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_TOKEN_INVALID,
+        "refresh token is invalid");
+  }
+  return StatusWithNotaryError(
+      response, veritas::notary::v1::NOTARY_ERROR_CODE_UNAUTHORIZED,
+      "authorization failed");
+}
+
 grpc::Status ValidateIssueRequest(
     const veritas::notary::v1::IssueCertificateRequest& request,
     veritas::notary::v1::IssueCertificateResponse* response,
@@ -431,6 +473,11 @@ grpc::Status ValidateRevokeRequest(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
         "reason exceeds size limit");
   }
+  if (!IsSupportedRevocationReason(request.reason())) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "reason is not a supported revocation code");
+  }
   if (request.actor().empty()) {
     return StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
@@ -440,6 +487,32 @@ grpc::Status ValidateRevokeRequest(
     return StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
         "actor exceeds size limit");
+  }
+  return grpc::Status::OK;
+}
+
+grpc::Status ValidateStatusRequest(
+    const veritas::notary::v1::GetCertificateStatusRequest& request,
+    veritas::notary::v1::GetCertificateStatusResponse* response) {
+  if (request.certificate_serial().empty()) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "certificate_serial is required");
+  }
+  if (request.certificate_serial().size() > kMaxSerialBytes) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "certificate_serial exceeds size limit");
+  }
+  if (request.refresh_token().empty()) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "refresh_token is required");
+  }
+  if (request.refresh_token().size() > kMaxRefreshTokenBytes) {
+    return StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
+        "refresh_token exceeds size limit");
   }
   return grpc::Status::OK;
 }
@@ -926,12 +999,29 @@ grpc::Status NotaryServiceImpl::GetCertificateStatus(
     return status;
   }
 
-  if (request->certificate_serial().empty()) {
+  const auto validation_status = ValidateStatusRequest(*request, response);
+  if (!validation_status.ok()) {
     security_metrics_->Increment("validation_failure");
+    LogNotaryEvent("GetCertificateStatus", validation_status,
+                   "validation_failed");
+    return validation_status;
+  }
+
+  const auto authz = authorizer_->AuthorizeRefreshToken(request->refresh_token());
+  if (!authz.ok()) {
+    security_metrics_->Increment("authz_failure");
+    const auto mapped = MapAuthzStatusToStatusReadError(authz, response);
+    LogNotaryEvent("GetCertificateStatus", mapped, "authorization_failed");
+    return mapped;
+  }
+
+  std::string token_hash;
+  try {
+    token_hash = HashTokenSha256(request->refresh_token());
+  } catch (const std::exception& ex) {
     const auto status = StatusWithNotaryError(
-        response, veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST,
-        "certificate_serial is required");
-    LogNotaryEvent("GetCertificateStatus", status, "validation_failed");
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_INTERNAL, ex.what());
+    LogNotaryEvent("GetCertificateStatus", status, "token_hash_failed");
     return status;
   }
 
@@ -949,6 +1039,15 @@ grpc::Status NotaryServiceImpl::GetCertificateStatus(
         veritas::notary::v1::CERTIFICATE_STATUS_STATE_UNKNOWN);
     LogNotaryEvent("GetCertificateStatus", grpc::Status::OK, "unknown");
     return grpc::Status::OK;
+  }
+
+  if (record->token_hash != token_hash) {
+    security_metrics_->Increment("policy_denied");
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
+        "certificate does not belong to this token");
+    LogNotaryEvent("GetCertificateStatus", status, "token_mismatch");
+    return status;
   }
 
   FillTimestamp(record->issued_at, response->mutable_not_before());

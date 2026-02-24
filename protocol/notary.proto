@@ -80,6 +80,7 @@ message RevokeCertificateResponse {
 
 message GetCertificateStatusRequest {
   string certificate_serial = 1;
+  bytes refresh_token = 2;
 }
 
 message GetCertificateStatusResponse {
