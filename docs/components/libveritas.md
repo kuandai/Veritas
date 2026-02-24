@@ -23,6 +23,9 @@ token rotation callbacks, and a security context for transport layers (TLS/QUIC)
   - `AuthFlow` orchestrates SRP proofs across gRPC + SASL.
   - `GatekeeperClientConfig.allow_insecure` is accepted in non-release builds;
     release builds reject insecure transport.
+  - Gatekeeper protocol metadata is sent on every RPC:
+    `x-veritas-protocol=<major>.<minor>` (defaults `1.0`), and selected
+    version metadata is validated on successful responses.
 - Client storage layer now includes a `TokenStore` abstraction with:
   - `Libsecret` backend for secure keyring-backed persistence.
   - File fallback backend gated by explicit opt-in

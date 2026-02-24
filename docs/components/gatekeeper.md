@@ -12,6 +12,11 @@ Authenticate clients and issue refresh tokens via a gRPC interface.
 - Optional mTLS enforcement via CA bundle + client cert requirement.
 - `BeginAuth` / `FinishAuth` handlers exist.
 - `RevokeToken` / `GetTokenStatus` handlers exist.
+- Gatekeeper enforces wire compatibility metadata on all RPCs:
+  - requires `x-veritas-protocol=<major>.<minor>`,
+  - rejects unsupported major with `FAILED_PRECONDITION`,
+  - rejects missing/malformed metadata with `INVALID_ARGUMENT`,
+  - returns selected version in `x-veritas-protocol-selected`.
 - Per-IP rate limiting (5/minute) with oldest-bucket eviction when the
   in-memory key cap is reached (default: 10,000 keys).
 - Structured logging to stdout (`timestamp`, `ip`, `action`, `status`,

@@ -77,6 +77,9 @@ Implemented
   - `TokenRevoked` alert + `LOCKED` transition on revoked status.
 - `GatekeeperClientConfig.allow_insecure` is accepted in non-release builds;
   release builds reject insecure transport.
+- `GatekeeperClient` now sends protocol version metadata on all Gatekeeper RPCs
+  (`x-veritas-protocol`) and validates selected-version metadata
+  (`x-veritas-protocol-selected`) on success paths.
 - Storage layer includes a `TokenStore` abstraction with:
   - `Libsecret` backend for keyring-backed identity persistence.
   - File fallback backend that requires explicit insecure opt-in.
@@ -100,13 +103,14 @@ Implemented
   - renewal,
   - revocation,
   - status lookup.
+- `protocol/identity.proto` defines protocol negotiation primitives:
+  - `ProtocolVersion`,
+  - `NegotiateRequest` / `NegotiateResponse`,
+  - `NegotiationResult`,
+  - `Identity.Negotiate`.
 - Notary contract includes structured service-level enums/messages for:
   - error classification (`NotaryErrorCode`, `NotaryErrorDetail`),
   - certificate lifecycle state (`CertificateStatusState`).
-
-Placeholders / incomplete
-- `protocol/identity.proto` is explicitly a placeholder.
-- Cross-service protocol version negotiation is not implemented.
 
 Aspirational
 - Full protocol surface for identity, token issuance, and notary services.
