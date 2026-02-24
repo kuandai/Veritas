@@ -87,9 +87,17 @@ Implemented
   - startup load of persisted identity,
   - save on successful authentication,
   - explicit clear via `ClearPersistedIdentity()`.
+- Notary-backed certificate lifecycle is available from `IdentityManager`:
+  - `IssueCertificate`,
+  - `RenewCertificate`,
+  - `RevokeCertificate`,
+  - `GetCertificateStatus`.
+  - Operations consume the authenticated refresh token from current identity
+    state and map Notary failures to
+    `IdentityErrorCode::NotaryRequestFailed`.
 
 Placeholders / incomplete
-- No Notary-backed credential provider path yet.
+- Rotation worker depends on configured credential provider and auth target.
 
 Aspirational
 - Production-grade credential management, rotation, and TLS/QUIC integration.

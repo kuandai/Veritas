@@ -53,6 +53,14 @@ token rotation callbacks, and a security context for transport layers (TLS/QUIC)
   - `StartRevocationMonitor`/`StopRevocationMonitor` polling loop.
   - Client-side `GetTokenStatus` checks via Gatekeeper.
   - `TokenRevoked` alert emission and `LOCKED` transition on revocation.
+- Notary-backed certificate lifecycle path is implemented:
+  - `IssueCertificate(...)`
+  - `RenewCertificate(...)`
+  - `RevokeCertificate(...)`
+  - `GetCertificateStatus(...)`
+  - Uses the authenticated refresh token from `IdentityManager` state.
+  - Enforces `IdentityState::Ready` before Notary operations.
+  - Maps Notary failures to `IdentityErrorCode::NotaryRequestFailed`.
 - Transport context hardening:
   - Thread-safe `SSL_CTX` swap with reader-safe shared ownership.
   - TLS 1.3-only context construction.
@@ -63,7 +71,6 @@ token rotation callbacks, and a security context for transport layers (TLS/QUIC)
 ## Placeholders / incomplete
 
 - Rotation worker depends on configured credential provider and auth target.
-- Credential-provider abstraction is local-only (no Notary integration yet).
 
 ## Aspirational
 
