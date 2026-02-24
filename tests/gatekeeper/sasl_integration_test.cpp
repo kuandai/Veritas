@@ -614,6 +614,76 @@ TEST(SaslIntegrationTest, BeginAuthKnownAndUnknownHaveEquivalentPublicShape) {
   EXPECT_EQ(known_response.params().hash(), unknown_response.params().hash());
 }
 
+TEST(SaslIntegrationTest, BeginAuthRequiresClientStartWhenSaslEnabled) {
+  SaslFixture fixture;
+  const auto setup = EnsureUserExists(fixture);
+  if (setup.kind == SaslSetupResultKind::Skip) {
+    GTEST_SKIP() << setup.message;
+  }
+  ASSERT_EQ(setup.kind, SaslSetupResultKind::Ok) << setup.message;
+
+  veritas::auth::v1::BeginAuthRequest request;
+  veritas::auth::v1::BeginAuthResponse response;
+  request.set_login_username(fixture.username);
+
+  const grpc::Status status = fixture.server->BeginAuth(request, &response);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
+}
+
+TEST(SaslIntegrationTest, BeginAuthUnknownMechanismMapsToFailedPrecondition) {
+  SaslFixture fixture;
+  const auto setup = EnsureUserExists(fixture);
+  if (setup.kind == SaslSetupResultKind::Skip) {
+    GTEST_SKIP() << setup.message;
+  }
+  ASSERT_EQ(setup.kind, SaslSetupResultKind::Ok) << setup.message;
+  if (EnsureClientInit() != SASL_OK) {
+    GTEST_SKIP() << "SASL client initialization failed";
+  }
+
+  SaslServerOptions unknown_mech_options = fixture.options;
+  unknown_mech_options.sasl_mech_list = "NOT_A_REAL_MECHANISM";
+  SaslServer unknown_mech_server(unknown_mech_options);
+
+  ClientCreds creds{fixture.username, fixture.password};
+  sasl_callback_t callbacks[] = {
+      {SASL_CB_AUTHNAME, reinterpret_cast<int (*)(void)>(&SaslGetSimple), &creds},
+      {SASL_CB_USER, reinterpret_cast<int (*)(void)>(&SaslGetSimple), &creds},
+      {SASL_CB_PASS, reinterpret_cast<int (*)(void)>(&SaslGetSecret), &creds},
+      {SASL_CB_LIST_END, nullptr, nullptr},
+  };
+
+  sasl_conn_t* client_conn = nullptr;
+  int rc = sasl_client_new(fixture.options.sasl_service.c_str(), "localhost",
+                           nullptr, nullptr, callbacks, 0, &client_conn);
+  ASSERT_EQ(rc, SASL_OK);
+
+  const char* client_out = nullptr;
+  unsigned client_out_len = 0;
+  const char* mech = nullptr;
+  rc = sasl_client_start(client_conn, "SRP", nullptr, &client_out,
+                         &client_out_len, &mech);
+  if (rc == SASL_NOMECH) {
+    sasl_dispose(&client_conn);
+    GTEST_SKIP() << "SRP mechanism not available for client";
+  }
+  ASSERT_TRUE(rc == SASL_CONTINUE || rc == SASL_OK);
+  if (!client_out || client_out_len == 0) {
+    sasl_dispose(&client_conn);
+    GTEST_SKIP() << "SASL client did not emit initial response";
+  }
+
+  veritas::auth::v1::BeginAuthRequest begin_request;
+  veritas::auth::v1::BeginAuthResponse begin_response;
+  begin_request.set_login_username(fixture.username);
+  begin_request.set_client_start(std::string(client_out, client_out_len));
+  const grpc::Status begin_status =
+      unknown_mech_server.BeginAuth(begin_request, &begin_response);
+  sasl_dispose(&client_conn);
+
+  EXPECT_EQ(begin_status.error_code(), grpc::StatusCode::FAILED_PRECONDITION);
+}
+
 TEST(SaslIntegrationTest, InvalidProofIsUnauthenticated) {
   SaslFixture fixture;
   const auto setup = EnsureUserExists(fixture);

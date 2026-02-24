@@ -265,8 +265,12 @@ std::string SelectMechanism(const std::string& mech_list) {
 
 #if !defined(VERITAS_DISABLE_SASL)
 grpc::Status MapSaslError(int code, std::string_view context) {
-  grpc::StatusCode grpc_code = grpc::StatusCode::UNAUTHENTICATED;
+  grpc::StatusCode grpc_code = grpc::StatusCode::INTERNAL;
   switch (code) {
+    case SASL_BADPARAM:
+    case SASL_BUFOVER:
+      grpc_code = grpc::StatusCode::INVALID_ARGUMENT;
+      break;
     case SASL_NOAUTHZ:
     case SASL_WRONGMECH:
       grpc_code = grpc::StatusCode::PERMISSION_DENIED;
@@ -274,21 +278,26 @@ grpc::Status MapSaslError(int code, std::string_view context) {
     case SASL_PWLOCK:
     case SASL_TOOWEAK:
     case SASL_WEAKPASS:
+    case SASL_NOMEM:
       grpc_code = grpc::StatusCode::RESOURCE_EXHAUSTED;
       break;
     case SASL_UNAVAIL:
     case SASL_TRYAGAIN:
-    case SASL_NOMEM:
-    case SASL_NOMECH:
       grpc_code = grpc::StatusCode::UNAVAILABLE;
+      break;
+    case SASL_NOMECH:
+      grpc_code = grpc::StatusCode::FAILED_PRECONDITION;
       break;
     case SASL_BADAUTH:
     case SASL_BADMAC:
     case SASL_BADPROT:
     case SASL_NOUSER:
     case SASL_NOVERIFY:
-    default:
       grpc_code = grpc::StatusCode::UNAUTHENTICATED;
+      break;
+    case SASL_FAIL:
+    default:
+      grpc_code = grpc::StatusCode::INTERNAL;
       break;
   }
   std::string message(context);
