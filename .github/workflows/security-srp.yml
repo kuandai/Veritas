@@ -159,3 +159,47 @@ jobs:
         env:
           TSAN_OPTIONS: "suppressions=${{ github.workspace }}/tests/tsan-grpc.supp halt_on_error=1"
         run: ctest --test-dir build_tsan --output-on-failure -R "veritas_gatekeeper_tests|veritas_libveritas_tests|veritas_notary_tests"
+
+  package-artifacts:
+    runs-on: ubuntu-24.04
+    env:
+      CONAN_HOME: ${{ github.workspace }}/.conan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Conan
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "conan>=2.0,<3.0"
+
+      - name: Bootstrap Conan recipes
+        run: ./scripts/bootstrap.sh
+
+      - name: Generate lockfile
+        run: ./scripts/lock.sh
+
+      - name: Build release artifacts
+        env:
+          BUILD_TYPE: Release
+          VERITAS_ENABLE_PROTO_TESTS: OFF
+        run: ./scripts/build.sh
+
+      - name: Package release artifacts
+        run: ./scripts/package.sh
+
+      - name: Verify packaged artifacts
+        run: ./scripts/verify_package.sh
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: veritas-package-${{ github.sha }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
