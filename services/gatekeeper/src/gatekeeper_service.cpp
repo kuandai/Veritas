@@ -1,6 +1,9 @@
 #include "gatekeeper_service.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cctype>
+#include <cstdint>
 #include <ctime>
 #include <iomanip>
 #include <iostream>
@@ -13,6 +16,12 @@
 namespace veritas::auth::v1 {
 
 namespace {
+
+constexpr std::string_view kProtocolMetadataKey = "x-veritas-protocol";
+constexpr std::string_view kSelectedProtocolMetadataKey =
+    "x-veritas-protocol-selected";
+constexpr std::uint32_t kSupportedProtocolMajor = 1;
+constexpr std::uint32_t kSupportedProtocolMinor = 0;
 
 std::string ExtractPeerIp(const grpc::ServerContext* context) {
   if (!context) {
@@ -42,6 +51,71 @@ std::string ExtractPeerIp(const grpc::ServerContext* context) {
     return hostport.substr(0, colon);
   }
   return "unknown";
+}
+
+std::string FormatProtocolVersion(std::uint32_t major, std::uint32_t minor) {
+  return std::to_string(major) + "." + std::to_string(minor);
+}
+
+bool ParseProtocolVersion(std::string_view value,
+                          std::uint32_t* major,
+                          std::uint32_t* minor) {
+  if (!major || !minor) {
+    return false;
+  }
+  const auto dot = value.find('.');
+  if (dot == std::string_view::npos || dot == 0 || dot + 1 >= value.size()) {
+    return false;
+  }
+  const std::string_view major_part = value.substr(0, dot);
+  const std::string_view minor_part = value.substr(dot + 1);
+  for (const char ch : major_part) {
+    if (!std::isdigit(static_cast<unsigned char>(ch))) {
+      return false;
+    }
+  }
+  for (const char ch : minor_part) {
+    if (!std::isdigit(static_cast<unsigned char>(ch))) {
+      return false;
+    }
+  }
+  try {
+    *major = static_cast<std::uint32_t>(std::stoul(std::string(major_part)));
+    *minor = static_cast<std::uint32_t>(std::stoul(std::string(minor_part)));
+  } catch (const std::exception&) {
+    return false;
+  }
+  return true;
+}
+
+grpc::Status ValidateProtocolVersion(grpc::ServerContext* context) {
+  if (!context) {
+    return grpc::Status(grpc::StatusCode::INTERNAL, "missing server context");
+  }
+  const auto& metadata = context->client_metadata();
+  const auto it = metadata.find(std::string(kProtocolMetadataKey));
+  if (it == metadata.end()) {
+    return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                        "protocol version metadata is required");
+  }
+
+  std::uint32_t major = 0;
+  std::uint32_t minor = 0;
+  const std::string_view value(it->second.data(), it->second.length());
+  if (!ParseProtocolVersion(value, &major, &minor)) {
+    return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                        "malformed protocol version metadata");
+  }
+  if (major != kSupportedProtocolMajor) {
+    return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION,
+                        "unsupported protocol major version");
+  }
+
+  const std::uint32_t selected_minor = std::min(minor, kSupportedProtocolMinor);
+  context->AddInitialMetadata(
+      std::string(kSelectedProtocolMetadataKey),
+      FormatProtocolVersion(kSupportedProtocolMajor, selected_minor));
+  return grpc::Status::OK;
 }
 
 std::string FormatTimestamp(std::chrono::system_clock::time_point now) {
@@ -87,6 +161,13 @@ grpc::Status GatekeeperServiceImpl::BeginAuth(grpc::ServerContext* context,
                                               const BeginAuthRequest* request,
                                               BeginAuthResponse* response) {
   const std::string peer_ip = ExtractPeerIp(context);
+  const grpc::Status protocol_status = ValidateProtocolVersion(context);
+  if (!protocol_status.ok()) {
+    metrics_.Record(peer_ip, "", false);
+    metrics_.RecordSecurityEvent("protocol_version_rejected");
+    LogAuthEvent(peer_ip, "BeginAuth", protocol_status, "");
+    return protocol_status;
+  }
   grpc::Status status;
   if (!rate_limiter_.Allow(peer_ip)) {
     status = grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
@@ -107,6 +188,13 @@ grpc::Status GatekeeperServiceImpl::FinishAuth(grpc::ServerContext* context,
                                                const FinishAuthRequest* request,
                                                FinishAuthResponse* response) {
   const std::string peer_ip = ExtractPeerIp(context);
+  const grpc::Status protocol_status = ValidateProtocolVersion(context);
+  if (!protocol_status.ok()) {
+    metrics_.Record(peer_ip, "", false);
+    metrics_.RecordSecurityEvent("protocol_version_rejected");
+    LogAuthEvent(peer_ip, "FinishAuth", protocol_status, "");
+    return protocol_status;
+  }
   grpc::Status status;
   if (!rate_limiter_.Allow(peer_ip)) {
     status = grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
@@ -129,6 +217,13 @@ grpc::Status GatekeeperServiceImpl::RevokeToken(
     const RevokeTokenRequest* request,
     RevokeTokenResponse* response) {
   const std::string peer_ip = ExtractPeerIp(context);
+  const grpc::Status protocol_status = ValidateProtocolVersion(context);
+  if (!protocol_status.ok()) {
+    metrics_.Record(peer_ip, "", false);
+    metrics_.RecordSecurityEvent("protocol_version_rejected");
+    LogAuthEvent(peer_ip, "RevokeToken", protocol_status, "");
+    return protocol_status;
+  }
   grpc::Status status;
   if (!rate_limiter_.Allow(peer_ip)) {
     status = grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
@@ -150,6 +245,13 @@ grpc::Status GatekeeperServiceImpl::GetTokenStatus(
     const GetTokenStatusRequest* request,
     GetTokenStatusResponse* response) {
   const std::string peer_ip = ExtractPeerIp(context);
+  const grpc::Status protocol_status = ValidateProtocolVersion(context);
+  if (!protocol_status.ok()) {
+    metrics_.Record(peer_ip, "", false);
+    metrics_.RecordSecurityEvent("protocol_version_rejected");
+    LogAuthEvent(peer_ip, "GetTokenStatus", protocol_status, "");
+    return protocol_status;
+  }
   grpc::Status status;
   if (!rate_limiter_.Allow(peer_ip)) {
     status = grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,

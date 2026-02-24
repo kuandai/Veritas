@@ -1,11 +1,91 @@
 #include "gatekeeper_client.h"
 
+#include <cctype>
 #include <chrono>
 #include <stdexcept>
+#include <string_view>
 
 namespace veritas::auth {
 
 namespace {
+
+constexpr std::string_view kProtocolMetadataKey = "x-veritas-protocol";
+constexpr std::string_view kSelectedProtocolMetadataKey =
+    "x-veritas-protocol-selected";
+
+std::string FormatProtocolVersion(std::uint32_t major, std::uint32_t minor) {
+  return std::to_string(major) + "." + std::to_string(minor);
+}
+
+bool ParseProtocolVersion(std::string_view value,
+                          std::uint32_t* major,
+                          std::uint32_t* minor) {
+  if (!major || !minor) {
+    return false;
+  }
+  const auto dot = value.find('.');
+  if (dot == std::string_view::npos || dot == 0 || dot + 1 >= value.size()) {
+    return false;
+  }
+
+  const std::string_view major_part = value.substr(0, dot);
+  const std::string_view minor_part = value.substr(dot + 1);
+  if (major_part.empty() || minor_part.empty()) {
+    return false;
+  }
+  for (const char ch : major_part) {
+    if (!std::isdigit(static_cast<unsigned char>(ch))) {
+      return false;
+    }
+  }
+  for (const char ch : minor_part) {
+    if (!std::isdigit(static_cast<unsigned char>(ch))) {
+      return false;
+    }
+  }
+
+  try {
+    *major = static_cast<std::uint32_t>(std::stoul(std::string(major_part)));
+    *minor = static_cast<std::uint32_t>(std::stoul(std::string(minor_part)));
+  } catch (const std::exception&) {
+    return false;
+  }
+  return true;
+}
+
+void AttachProtocolMetadata(grpc::ClientContext* context,
+                            const GatekeeperClientConfig& config) {
+  if (!context) {
+    return;
+  }
+  context->AddMetadata(std::string(kProtocolMetadataKey),
+                       FormatProtocolVersion(config.protocol_major,
+                                             config.protocol_minor));
+}
+
+void ValidateNegotiatedVersion(const grpc::ClientContext& context,
+                               const GatekeeperClientConfig& config) {
+  const auto& metadata = context.GetServerInitialMetadata();
+  const auto it = metadata.find(std::string(kSelectedProtocolMetadataKey));
+  if (it == metadata.end()) {
+    throw std::runtime_error(
+        "Gatekeeper did not return negotiated protocol version metadata");
+  }
+
+  const std::string_view value(it->second.data(), it->second.length());
+  std::uint32_t selected_major = 0;
+  std::uint32_t selected_minor = 0;
+  if (!ParseProtocolVersion(value, &selected_major, &selected_minor)) {
+    throw std::runtime_error("Gatekeeper returned malformed protocol version");
+  }
+
+  if (selected_major != config.protocol_major) {
+    throw std::runtime_error("Gatekeeper negotiated an unsupported major version");
+  }
+  if (selected_minor > config.protocol_minor) {
+    throw std::runtime_error("Gatekeeper negotiated a newer minor version");
+  }
+}
 
 std::shared_ptr<grpc::ChannelCredentials> BuildCredentials(
     const GatekeeperClientConfig& config) {
@@ -27,7 +107,8 @@ std::shared_ptr<grpc::ChannelCredentials> BuildCredentials(
 
 }  // namespace
 
-GatekeeperClient::GatekeeperClient(const GatekeeperClientConfig& config) {
+GatekeeperClient::GatekeeperClient(const GatekeeperClientConfig& config)
+    : config_(config) {
   if (config.target.empty()) {
     throw std::runtime_error("Gatekeeper target is required");
   }
@@ -45,11 +126,13 @@ BeginAuthResult GatekeeperClient::BeginAuth(const std::string& username,
   }
 
   grpc::ClientContext context;
+  AttachProtocolMetadata(&context, config_);
   const grpc::Status status = stub_->BeginAuth(&context, request, &response);
   if (!status.ok()) {
     throw GatekeeperError(status.error_code(),
                           "BeginAuth failed: " + status.error_message());
   }
+  ValidateNegotiatedVersion(context, config_);
 
   BeginAuthResult result;
   result.session_id = response.session_id();
@@ -65,11 +148,13 @@ FinishAuthResult GatekeeperClient::FinishAuth(const std::string& session_id,
   request.set_client_proof(client_proof);
 
   grpc::ClientContext context;
+  AttachProtocolMetadata(&context, config_);
   const grpc::Status status = stub_->FinishAuth(&context, request, &response);
   if (!status.ok()) {
     throw GatekeeperError(status.error_code(),
                           "FinishAuth failed: " + status.error_message());
   }
+  ValidateNegotiatedVersion(context, config_);
 
   FinishAuthResult result;
   result.server_proof = response.server_proof();
@@ -91,11 +176,13 @@ void GatekeeperClient::RevokeToken(const std::string& refresh_token,
   request.set_reason(reason);
 
   grpc::ClientContext context;
+  AttachProtocolMetadata(&context, config_);
   const grpc::Status status = stub_->RevokeToken(&context, request, &response);
   if (!status.ok()) {
     throw GatekeeperError(status.error_code(),
                           "RevokeToken failed: " + status.error_message());
   }
+  ValidateNegotiatedVersion(context, config_);
 }
 
 TokenStatusResult GatekeeperClient::GetTokenStatus(
@@ -105,12 +192,14 @@ TokenStatusResult GatekeeperClient::GetTokenStatus(
   request.set_refresh_token(refresh_token);
 
   grpc::ClientContext context;
+  AttachProtocolMetadata(&context, config_);
   const grpc::Status status =
       stub_->GetTokenStatus(&context, request, &response);
   if (!status.ok()) {
     throw GatekeeperError(status.error_code(),
                           "GetTokenStatus failed: " + status.error_message());
   }
+  ValidateNegotiatedVersion(context, config_);
 
   TokenStatusResult result;
   switch (response.state()) {

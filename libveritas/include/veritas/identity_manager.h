@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -78,6 +79,8 @@ struct GatekeeperClientConfig {
   std::string target;
   std::string root_cert_pem;
   bool allow_insecure = false;
+  std::uint32_t protocol_major = 1;
+  std::uint32_t protocol_minor = 0;
 };
 
 struct RotationPolicy {

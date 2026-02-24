@@ -47,6 +47,7 @@ class GatekeeperClient {
   TokenStatusResult GetTokenStatus(const std::string& refresh_token);
 
  private:
+  GatekeeperClientConfig config_;
   std::shared_ptr<grpc::Channel> channel_;
   std::unique_ptr<veritas::auth::v1::Gatekeeper::Stub> stub_;
 };

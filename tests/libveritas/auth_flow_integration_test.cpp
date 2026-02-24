@@ -385,6 +385,49 @@ TEST(AuthFlowIntegrationTest, SrpHappyPath) {
   EXPECT_FALSE(result.refresh_token.empty());
 }
 
+TEST(AuthFlowIntegrationTest, ProtocolNegotiationRejectsUnsupportedMajor) {
+  GatekeeperHarness harness;
+  const auto setup = StartGatekeeper(&harness);
+  if (setup.kind == SaslSetupResult::Kind::Skip) {
+    GTEST_SKIP() << setup.message;
+  }
+  ASSERT_EQ(setup.kind, SaslSetupResult::Kind::Ok) << setup.message;
+
+  GatekeeperClientConfig config;
+  config.target = harness.target;
+  config.allow_insecure = true;
+  config.protocol_major = 9;
+  config.protocol_minor = 0;
+
+  AuthFlow flow(config);
+  try {
+    (void)flow.Authenticate(harness.username, harness.password);
+    FAIL() << "Expected protocol major version rejection";
+  } catch (const GatekeeperError& ex) {
+    EXPECT_EQ(ex.code(), grpc::StatusCode::FAILED_PRECONDITION);
+  }
+}
+
+TEST(AuthFlowIntegrationTest, ProtocolNegotiationAllowsMinorDowngrade) {
+  GatekeeperHarness harness;
+  const auto setup = StartGatekeeper(&harness);
+  if (setup.kind == SaslSetupResult::Kind::Skip) {
+    GTEST_SKIP() << setup.message;
+  }
+  ASSERT_EQ(setup.kind, SaslSetupResult::Kind::Ok) << setup.message;
+
+  GatekeeperClientConfig config;
+  config.target = harness.target;
+  config.allow_insecure = true;
+  config.protocol_major = 1;
+  config.protocol_minor = 7;
+
+  AuthFlow flow(config);
+  const auto result = flow.Authenticate(harness.username, harness.password);
+  EXPECT_FALSE(result.user_uuid.empty());
+  EXPECT_FALSE(result.refresh_token.empty());
+}
+
 TEST(IdentityManagerIntegrationTest, AuthenticatePersistsIdentity) {
   GatekeeperHarness harness;
   const auto setup = StartGatekeeper(&harness);

@@ -9,6 +9,13 @@
 
 namespace veritas::notary {
 
+namespace {
+
+constexpr const char* kProtocolMetadataKey = "x-veritas-protocol";
+constexpr const char* kProtocolVersionValue = "1.0";
+
+}  // namespace
+
 GatekeeperTokenStatusClient::GatekeeperTokenStatusClient(
     const GatekeeperTokenStatusClientConfig& config) {
   if (config.target.empty()) {
@@ -46,6 +53,7 @@ grpc::Status GatekeeperTokenStatusClient::GetTokenStatus(
   request.set_refresh_token(refresh_token);
 
   grpc::ClientContext context;
+  context.AddMetadata(kProtocolMetadataKey, kProtocolVersionValue);
   const auto status = stub_->GetTokenStatus(&context, request, &response);
   if (!status.ok()) {
     return status;
