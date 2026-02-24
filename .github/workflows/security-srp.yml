@@ -119,6 +119,33 @@ jobs:
       - name: Run notary lifecycle suite
         run: ctest --test-dir build --output-on-failure -R veritas_notary_tests
 
+  redis-tls-integration:
+    runs-on: ubuntu-24.04
+    env:
+      CONAN_HOME: ${{ github.workspace }}/.conan
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Conan
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "conan>=2.0,<3.0"
+
+      - name: Bootstrap Conan recipes
+        run: ./scripts/bootstrap.sh
+
+      - name: Generate lockfile
+        run: ./scripts/lock.sh
+
+      - name: Run Redis TLS integration lane
+        run: ./scripts/run_redis_tls_lane.sh
+
   tsan-nightly:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04

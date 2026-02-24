@@ -12,6 +12,8 @@ export CONAN_HOME
 if [[ -z "${VERITAS_REDIS_TLS_URI:-}" ]]; then
   echo "VERITAS_REDIS_TLS_URI is not set."
   echo "Set it to a reachable rediss:// URI to exercise successful TLS connectivity."
+else
+  export VERITAS_REQUIRE_REDIS_TLS_ENDPOINT=1
 fi
 
 conan install "${ROOT_DIR}" -of "${BUILD_DIR}" -s build_type="${BUILD_TYPE}" --build=missing

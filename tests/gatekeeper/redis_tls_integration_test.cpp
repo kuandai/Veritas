@@ -23,7 +23,16 @@ TEST(RedisTlsIntegrationTest, RedissWithoutCaFailsClosed) {
 
 TEST(RedisTlsIntegrationTest, RedissRoundtripWithExternalEndpoint) {
   const char* uri = std::getenv("VERITAS_REDIS_TLS_URI");
+  const bool endpoint_required = []() {
+    const char* flag = std::getenv("VERITAS_REQUIRE_REDIS_TLS_ENDPOINT");
+    return flag && std::string(flag) == "1";
+  }();
+
   if (!uri || uri[0] == '\0') {
+    if (endpoint_required) {
+      FAIL() << "VERITAS_REDIS_TLS_URI must be set when "
+                "VERITAS_REQUIRE_REDIS_TLS_ENDPOINT=1";
+    }
     GTEST_SKIP() << "VERITAS_REDIS_TLS_URI is not set";
   }
 
