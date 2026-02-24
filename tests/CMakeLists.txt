@@ -24,7 +24,7 @@ set(VERITAS_TEST_SOURCES
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/secure_erase.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/session_cache.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/tls_utils.cpp
-  ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_store.cpp
+  ${CMAKE_SOURCE_DIR}/services/shared/src/token_store.cpp
   ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_utils.cpp
 )
 
@@ -37,7 +37,7 @@ if(VERITAS_ENABLE_PROTO_TESTS)
     protocol/notary_proto_contract_test.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/sasl_server.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/session_cache.cpp
-    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_store.cpp
+    ${CMAKE_SOURCE_DIR}/services/shared/src/token_store.cpp
   )
 endif()
 
@@ -46,6 +46,7 @@ add_executable(veritas_gatekeeper_tests ${VERITAS_TEST_SOURCES})
 target_include_directories(veritas_gatekeeper_tests
   PRIVATE
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src
+    ${CMAKE_SOURCE_DIR}/services/shared/include
     ${CMAKE_BINARY_DIR}/protocol
 )
 
@@ -85,7 +86,7 @@ if(VERITAS_ENABLE_PROTO_TESTS)
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/sasl_server.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/secure_erase.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/session_cache.cpp
-    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_store.cpp
+    ${CMAKE_SOURCE_DIR}/services/shared/src/token_store.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_utils.cpp
   )
 
@@ -96,6 +97,7 @@ if(VERITAS_ENABLE_PROTO_TESTS)
   target_include_directories(veritas_gatekeeper_integration_tests
     PRIVATE
       ${CMAKE_SOURCE_DIR}/services/gatekeeper/src
+      ${CMAKE_SOURCE_DIR}/services/shared/include
       ${CMAKE_BINARY_DIR}/protocol
   )
 
@@ -141,7 +143,7 @@ if(VERITAS_ENABLE_PROTO_TESTS)
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/sasl_server.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/secure_erase.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/session_cache.cpp
-    ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_store.cpp
+    ${CMAKE_SOURCE_DIR}/services/shared/src/token_store.cpp
     ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_utils.cpp
   )
 
@@ -151,6 +153,7 @@ if(VERITAS_ENABLE_PROTO_TESTS)
     PRIVATE
       ${CMAKE_SOURCE_DIR}/libveritas/src
       ${CMAKE_SOURCE_DIR}/services/gatekeeper/src
+      ${CMAKE_SOURCE_DIR}/services/shared/include
       ${CMAKE_BINARY_DIR}/protocol
   )
 
@@ -185,6 +188,7 @@ if(VERITAS_ENABLE_PROTO_TESTS)
     notary/signer_test.cpp
     notary/server_integration_test.cpp
     shared/issuance_store_test.cpp
+    shared/token_store_test.cpp
     ${CMAKE_SOURCE_DIR}/services/notary/src/authorizer.cpp
     ${CMAKE_SOURCE_DIR}/services/notary/src/config.cpp
     ${CMAKE_SOURCE_DIR}/services/notary/src/log_utils.cpp
@@ -239,12 +243,13 @@ if(VERITAS_ENABLE_PROTO_TESTS)
     add_executable(veritas_gatekeeper_redis_integration_tests
       main.cpp
       gatekeeper/redis_tls_integration_test.cpp
-      ${CMAKE_SOURCE_DIR}/services/gatekeeper/src/token_store.cpp
+      ${CMAKE_SOURCE_DIR}/services/shared/src/token_store.cpp
     )
 
     target_include_directories(veritas_gatekeeper_redis_integration_tests
       PRIVATE
         ${CMAKE_SOURCE_DIR}/services/gatekeeper/src
+        ${CMAKE_SOURCE_DIR}/services/shared/include
     )
 
     target_link_libraries(veritas_gatekeeper_redis_integration_tests
