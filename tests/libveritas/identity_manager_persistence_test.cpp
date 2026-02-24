@@ -125,5 +125,50 @@ TEST(IdentityManagerStateTest, MissingCredentialProviderHasMachineReadableError)
   EXPECT_EQ(manager.GetLastError(), IdentityErrorCode::MissingCredentialProvider);
 }
 
+TEST(IdentityManagerNotaryStateTest, NotaryCallsRequireReadyIdentity) {
+  IdentityManager manager([] { return std::string("unused"); });
+  NotaryClientConfig config;
+  config.target = "127.0.0.1:50052";
+  config.allow_insecure = true;
+
+  try {
+    static_cast<void>(manager.IssueCertificate(config, "csr", 600, "idem-1"));
+    FAIL() << "IssueCertificate should fail when identity is unauthenticated";
+  } catch (const IdentityManagerError& ex) {
+    EXPECT_EQ(ex.code(), IdentityErrorCode::InvalidStateTransition);
+  }
+}
+
+TEST(IdentityManagerNotaryStateTest, NotaryFailuresMapToMachineReadableError) {
+  storage::TokenStoreConfig store_config;
+  store_config.backend = storage::TokenStoreBackend::File;
+  store_config.file_path = UniqueTempFile("notary_error").string();
+  store_config.allow_insecure_fallback = true;
+
+  auto store = storage::CreateTokenStore(store_config);
+  storage::StoredIdentity seeded;
+  seeded.user_uuid = "ready-user";
+  seeded.refresh_token = "ready-token";
+  seeded.expires_at = std::chrono::system_clock::time_point(
+      std::chrono::seconds(1'900'000'789));
+  store->Save(seeded);
+
+  IdentityManager manager([] { return std::string("unused"); }, store_config);
+  ASSERT_EQ(manager.GetState(), IdentityState::Ready);
+
+  NotaryClientConfig notary_config;
+  notary_config.target = "127.0.0.1:59999";
+  notary_config.allow_insecure = true;
+
+  try {
+    static_cast<void>(
+        manager.IssueCertificate(notary_config, "csr", 600, "idem-1"));
+    FAIL() << "IssueCertificate should fail against unavailable Notary";
+  } catch (const IdentityManagerError& ex) {
+    EXPECT_EQ(ex.code(), IdentityErrorCode::NotaryRequestFailed);
+  }
+  EXPECT_EQ(manager.GetLastError(), IdentityErrorCode::NotaryRequestFailed);
+}
+
 }  // namespace
 }  // namespace veritas

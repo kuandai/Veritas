@@ -14,12 +14,15 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <grpcpp/server_builder.h>
 #include <sasl/sasl.h>
 
 #include "gatekeeper_service.h"
+#include "notary.grpc.pb.h"
 #include "sasl_server.h"
 
 namespace veritas::auth {
@@ -365,6 +368,195 @@ SaslSetupResult StartGatekeeper(GatekeeperHarness* harness) {
   return setup;
 }
 
+struct NotaryRecord {
+  bool revoked = false;
+  std::string reason;
+  std::chrono::system_clock::time_point not_before;
+  std::chrono::system_clock::time_point not_after;
+};
+
+class FakeNotaryService final : public veritas::notary::v1::Notary::Service {
+ public:
+  explicit FakeNotaryService(std::string expected_refresh_token)
+      : expected_refresh_token_(std::move(expected_refresh_token)) {}
+
+  grpc::Status IssueCertificate(
+      grpc::ServerContext* /*context*/,
+      const veritas::notary::v1::IssueCertificateRequest* request,
+      veritas::notary::v1::IssueCertificateResponse* response) override {
+    if (!Authorize(request->refresh_token(), response->mutable_error())) {
+      return grpc::Status(grpc::StatusCode::PERMISSION_DENIED,
+                          "refresh token rejected");
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    const std::string serial = "SERIAL-" + std::to_string(++serial_counter_);
+    const auto now = std::chrono::system_clock::now();
+    const auto ttl = std::chrono::seconds(request->requested_ttl_seconds());
+    records_[serial] = NotaryRecord{false, "", now, now + ttl};
+
+    response->set_issued(true);
+    response->set_certificate_serial(serial);
+    response->set_certificate_pem("leaf-" + serial);
+    response->set_certificate_chain_pem("chain-" + serial);
+    response->mutable_not_before()->set_seconds(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            now.time_since_epoch())
+            .count());
+    response->mutable_not_after()->set_seconds(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            (now + ttl).time_since_epoch())
+            .count());
+    return grpc::Status::OK;
+  }
+
+  grpc::Status RenewCertificate(
+      grpc::ServerContext* /*context*/,
+      const veritas::notary::v1::RenewCertificateRequest* request,
+      veritas::notary::v1::RenewCertificateResponse* response) override {
+    if (!Authorize(request->refresh_token(), response->mutable_error())) {
+      return grpc::Status(grpc::StatusCode::PERMISSION_DENIED,
+                          "refresh token rejected");
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = records_.find(request->certificate_serial());
+    if (it == records_.end()) {
+      response->mutable_error()->set_code(
+          veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST);
+      response->mutable_error()->set_detail("certificate not found");
+      return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                          "certificate not found");
+    }
+    const auto now = std::chrono::system_clock::now();
+    const auto ttl = std::chrono::seconds(request->requested_ttl_seconds());
+    it->second.not_before = now;
+    it->second.not_after = now + ttl;
+
+    response->set_renewed(true);
+    response->set_certificate_serial(request->certificate_serial());
+    response->set_certificate_pem("renewed-" + request->certificate_serial());
+    response->set_certificate_chain_pem("chain-" + request->certificate_serial());
+    response->mutable_not_before()->set_seconds(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            now.time_since_epoch())
+            .count());
+    response->mutable_not_after()->set_seconds(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            (now + ttl).time_since_epoch())
+            .count());
+    return grpc::Status::OK;
+  }
+
+  grpc::Status RevokeCertificate(
+      grpc::ServerContext* /*context*/,
+      const veritas::notary::v1::RevokeCertificateRequest* request,
+      veritas::notary::v1::RevokeCertificateResponse* response) override {
+    if (!Authorize(request->refresh_token(), response->mutable_error())) {
+      return grpc::Status(grpc::StatusCode::PERMISSION_DENIED,
+                          "refresh token rejected");
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = records_.find(request->certificate_serial());
+    if (it == records_.end()) {
+      response->mutable_error()->set_code(
+          veritas::notary::v1::NOTARY_ERROR_CODE_INVALID_REQUEST);
+      response->mutable_error()->set_detail("certificate not found");
+      return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                          "certificate not found");
+    }
+    it->second.revoked = true;
+    it->second.reason = request->reason();
+    const auto now = std::chrono::system_clock::now();
+    response->set_revoked(true);
+    response->mutable_revoked_at()->set_seconds(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            now.time_since_epoch())
+            .count());
+    return grpc::Status::OK;
+  }
+
+  grpc::Status GetCertificateStatus(
+      grpc::ServerContext* /*context*/,
+      const veritas::notary::v1::GetCertificateStatusRequest* request,
+      veritas::notary::v1::GetCertificateStatusResponse* response) override {
+    if (!Authorize(request->refresh_token(), response->mutable_error())) {
+      return grpc::Status(grpc::StatusCode::PERMISSION_DENIED,
+                          "refresh token rejected");
+    }
+
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto it = records_.find(request->certificate_serial());
+    if (it == records_.end()) {
+      response->set_state(veritas::notary::v1::CERTIFICATE_STATUS_STATE_UNKNOWN);
+      return grpc::Status::OK;
+    }
+    response->mutable_not_before()->set_seconds(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            it->second.not_before.time_since_epoch())
+            .count());
+    response->mutable_not_after()->set_seconds(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            it->second.not_after.time_since_epoch())
+            .count());
+    if (it->second.revoked) {
+      response->set_state(veritas::notary::v1::CERTIFICATE_STATUS_STATE_REVOKED);
+      response->set_reason(it->second.reason);
+      response->mutable_revoked_at()->set_seconds(
+          std::chrono::duration_cast<std::chrono::seconds>(
+              std::chrono::system_clock::now().time_since_epoch())
+              .count());
+    } else {
+      response->set_state(veritas::notary::v1::CERTIFICATE_STATUS_STATE_ACTIVE);
+    }
+    return grpc::Status::OK;
+  }
+
+ private:
+  template <typename ErrorType>
+  bool Authorize(std::string_view refresh_token, ErrorType* error) const {
+    if (refresh_token != expected_refresh_token_) {
+      if (error) {
+        error->set_code(veritas::notary::v1::NOTARY_ERROR_CODE_TOKEN_INVALID);
+        error->set_detail("refresh token does not match authenticated identity");
+      }
+      return false;
+    }
+    return true;
+  }
+
+  std::string expected_refresh_token_;
+  mutable std::mutex mutex_;
+  std::unordered_map<std::string, NotaryRecord> records_;
+  int serial_counter_ = 0;
+};
+
+struct NotaryHarness {
+  std::unique_ptr<FakeNotaryService> service;
+  std::unique_ptr<grpc::Server> server;
+  std::string target;
+};
+
+bool StartNotary(const std::string& expected_refresh_token, NotaryHarness* harness) {
+  if (!harness) {
+    return false;
+  }
+  harness->service =
+      std::make_unique<FakeNotaryService>(expected_refresh_token);
+  grpc::ServerBuilder builder;
+  int selected_port = 0;
+  builder.AddListeningPort("127.0.0.1:0", grpc::InsecureServerCredentials(),
+                           &selected_port);
+  builder.RegisterService(harness->service.get());
+  harness->server = builder.BuildAndStart();
+  if (!harness->server || selected_port == 0) {
+    return false;
+  }
+  harness->target = "127.0.0.1:" + std::to_string(selected_port);
+  return true;
+}
+
 }  // namespace
 
 TEST(AuthFlowIntegrationTest, SrpHappyPath) {
@@ -565,6 +757,51 @@ TEST(IdentityManagerIntegrationTest, RevocationTransitionsToLocked) {
   const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
       *locked_at - revoked_at);
   EXPECT_LE(elapsed.count(), 60);
+}
+
+TEST(IdentityManagerIntegrationTest, NotaryLifecycleUsesAuthenticatedToken) {
+  GatekeeperHarness gatekeeper;
+  const auto setup = StartGatekeeper(&gatekeeper);
+  if (setup.kind == SaslSetupResult::Kind::Skip) {
+    GTEST_SKIP() << setup.message;
+  }
+  ASSERT_EQ(setup.kind, SaslSetupResult::Kind::Ok) << setup.message;
+
+  GatekeeperClientConfig gatekeeper_config;
+  gatekeeper_config.target = gatekeeper.target;
+  gatekeeper_config.allow_insecure = true;
+
+  ::veritas::IdentityManager manager([] { return std::string("unused"); });
+  const auto auth_result = manager.Authenticate(
+      gatekeeper_config, gatekeeper.username, gatekeeper.password);
+  ASSERT_FALSE(auth_result.refresh_token.empty());
+
+  NotaryHarness notary;
+  ASSERT_TRUE(StartNotary(auth_result.refresh_token, &notary));
+
+  ::veritas::NotaryClientConfig notary_config;
+  notary_config.target = notary.target;
+  notary_config.allow_insecure = true;
+
+  const auto issued = manager.IssueCertificate(
+      notary_config, "csr-der", 600, "idem-issue");
+  EXPECT_FALSE(issued.certificate_serial.empty());
+  EXPECT_FALSE(issued.certificate_pem.empty());
+
+  const auto renewed = manager.RenewCertificate(
+      notary_config, issued.certificate_serial, 600, "idem-renew");
+  EXPECT_EQ(renewed.certificate_serial, issued.certificate_serial);
+  EXPECT_FALSE(renewed.certificate_pem.empty());
+
+  EXPECT_NO_THROW(manager.RevokeCertificate(notary_config,
+                                            issued.certificate_serial,
+                                            "TOKEN_REVOKED",
+                                            "integration-test"));
+
+  const auto status = manager.GetCertificateStatus(
+      notary_config, issued.certificate_serial);
+  EXPECT_EQ(status.state, ::veritas::CertificateStatusState::Revoked);
+  EXPECT_EQ(status.reason, "TOKEN_REVOKED");
 }
 
 }  // namespace veritas::auth
