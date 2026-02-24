@@ -28,6 +28,11 @@ items.
 - Local Gatekeeper/auth demo smoke test entrypoint is `scripts/smoke_auth_demo.sh`.
 - Local Notary lifecycle smoke test entrypoint is
   `scripts/smoke_notary_lifecycle.sh`.
+- Packaging + verification entrypoints are:
+  - `scripts/package.sh`
+  - `scripts/verify_package.sh`
+- CI packaging lane is `package-artifacts` in
+  `.github/workflows/security-srp.yml`, uploading `dist/*` artifacts.
 **Aspirational:** replace `file(GLOB_RECURSE ...)` with explicit source lists
 as the codebase stabilizes.
 

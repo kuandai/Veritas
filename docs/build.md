@@ -70,8 +70,43 @@ Provision SASL SRP users reproducibly with:
 
 ## 5. Packaging
 
-`scripts/package.sh` is currently a placeholder. Decide on a packaging target
-(containers or installable tarballs) before wiring CI deployment.
+Create reproducible release tarballs from an existing build:
+
+```bash
+./scripts/package.sh
+```
+
+By default this packages artifacts from `build/` into `dist/` and creates:
+
+- `dist/veritas-<version>-<platform>.tar.gz`
+- `dist/veritas-<version>-<platform>.tar.gz.sha256`
+
+Archive contents include:
+
+- `bin/veritas_gatekeeper`
+- `bin/veritas_notary`
+- `lib/libveritas.a`
+- `lib/libveritas_protocol.a`
+- `include/` public libveritas headers
+- `protocol/` protobuf source contracts
+- `metadata/manifest.txt`
+- `metadata/SHA256SUMS`
+
+To verify package integrity:
+
+```bash
+./scripts/verify_package.sh
+```
+
+`scripts/package.sh` also runs verification automatically unless
+`VERIFY_PACKAGE=false` is set.
+
+CI publication policy:
+
+- Workflow job `package-artifacts` builds release binaries and runs package +
+  verification.
+- Artifacts are uploaded via GitHub Actions as `veritas-package-<sha>`.
+- Artifact retention is 14 days.
 
 ## 6. Lockfile generation
 
