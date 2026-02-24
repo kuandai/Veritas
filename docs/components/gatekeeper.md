@@ -38,6 +38,8 @@ Authenticate clients and issue refresh tokens via a gRPC interface.
   - Session ids stored in a TTL cache and consumed atomically on `FinishAuth`.
   - Refresh token issuance + SHA-256 hashing stored in Redis when
     `TOKEN_STORE_URI` is set (in-memory fallback otherwise).
+  - Token persistence is implemented by shared storage primitives in
+    `services/shared` and consumed through Gatekeeper compatibility wrappers.
   - Revocation/tombstone behavior:
     - `RevokeToken` marks token status revoked with reason metadata.
     - revoked token hashes are tombstoned for 24 hours.
@@ -111,5 +113,4 @@ Redis token-store URIs:
 ## Aspirational
 
 - Streamlined SRP verifier provisioning and server-side rotation policy.
-- Redis-backed token store shared with Notary.
 - Exportable metrics for rate limiting and analytics.

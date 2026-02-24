@@ -2,29 +2,36 @@
 
 ## Purpose
 
-Provide common utilities and data-access primitives shared by Gatekeeper and
-Notary (e.g., token store, metrics, logging).
+Provide common data-access and utility primitives used by backend services.
 
 ## Current implementation
 
-- `veritas_shared` exposes a build-id helper.
-- Shared issuance persistence interface is implemented in
-  `services/shared/include/veritas/shared/issuance_store.h` with support for:
-  - issuance record storage,
-  - token-hash -> certificate serial linkage,
-  - idempotency key registration/lookup,
-  - revocation state updates.
+- `veritas_shared` provides shared utility code and storage abstractions.
+- Shared issuance persistence (`services/shared/include/veritas/shared/issuance_store.h`)
+  implements:
+  - certificate issuance record persistence,
+  - token-hash to certificate-serial linkage,
+  - idempotency registration/lookup,
+  - revocation metadata updates.
+- Shared refresh-token persistence (`services/shared/include/veritas/shared/token_store.h`)
+  implements:
+  - token put/get/status/revoke/revoke-user operations,
+  - replay rejection with revocation tombstones,
+  - Redis URI parsing for `redis://` and `rediss://`,
+  - fail-closed Redis TLS option validation.
 - Backends:
-  - thread-safe in-memory backend,
-  - Redis backend (with fail-closed behavior when redis support is unavailable).
-- Shared-layer tests cover idempotency semantics, revocation updates, and
-  concurrency behavior.
+  - thread-safe in-memory implementations,
+  - Redis implementations (with explicit unavailable errors when Redis support
+    is not compiled in).
+- Gatekeeper now consumes the shared token-store API through its compatibility
+  header (`services/gatekeeper/src/token_store.h`).
+- Shared-layer tests cover idempotency, revocation semantics, replay rejection,
+  and concurrency behavior.
 
 ## Placeholders / incomplete
 
-- Notary service is not yet wired to consume the shared issuance store.
-- Gatekeeper token store remains a service-local implementation.
+- Shared metrics/logging primitives are still service-local.
 
 ## Aspirational
 
-- Shared DB access, token store adapters, and metrics/logging utilities.
+- Unified DB topology and migrations shared across services.

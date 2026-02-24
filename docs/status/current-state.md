@@ -121,15 +121,18 @@ Implemented
   - token-hash to certificate-serial linkage,
   - idempotency registration/lookup semantics,
   - revocation-state updates.
+- Shared token store abstraction is implemented:
+  - token model and storage interface,
+  - in-memory tombstone/replay-rejection semantics,
+  - Redis URI parsing (`redis://`, `rediss://`) with fail-closed TLS validation.
 - Backends:
   - in-memory (thread-safe),
   - Redis (with explicit unavailable errors when Redis support is disabled).
-
-Placeholders / incomplete
-- Gatekeeper token-store implementation is still service-local.
+- Gatekeeper token-store compatibility header now forwards to shared token-store
+  primitives (`services/gatekeeper/src/token_store.h`).
 
 Aspirational
-- Shared DB access, token store adapters, and metrics/logging utilities.
+- Shared DB access and metrics/logging utilities.
 
 ### services/notary
 
@@ -271,13 +274,11 @@ Placeholders / incomplete
 
 Aspirational
 - Streamlined SRP verifier provisioning and server-side rotation policy.
-- Redis-backed token store shared with Notary.
 - Exportable rate limiting and analytics metrics.
 
 ## Cross-cutting gaps (incomplete)
 
 - SASL verifier provisioning still relies on sasldb/auxprop backend availability.
-- Shared storage layer and cross-service integration.
 - External Redis TLS connectivity validation requires a provisioned test endpoint.
 - Release transport policy gates were validated in `build_release` via:
   `ConfigTest.LoadConfigRejectsSaslDisabled` and
