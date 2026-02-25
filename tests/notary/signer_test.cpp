@@ -355,6 +355,71 @@ TEST(SignerTest, OpenSslSignerIssuesCertificateAndReturnsChain) {
             "principal-user");
 }
 
+TEST(SignerTest, OpenSslSignerAppliesConfiguredNotBeforeSkew) {
+  TempDir temp;
+  const auto issuer_pair = GenerateSelfSignedIssuer();
+  auto config = BuildSignerConfig(temp, issuer_pair);
+  config.not_before_skew = std::chrono::minutes(15);
+  OpenSslSigner signer(config);
+
+  SigningRequest request;
+  request.csr_der = GenerateCsrDer("svc.example.internal",
+                                   {"svc.example.internal"});
+  request.subject_common_name = "principal-user";
+  request.requested_ttl = std::chrono::minutes(10);
+
+  const auto before = std::chrono::system_clock::now();
+  const auto result = signer.Issue(request);
+  const auto after = std::chrono::system_clock::now();
+  const auto skew = config.not_before_skew;
+
+  EXPECT_GE(result.not_before, before - skew - std::chrono::seconds(2));
+  EXPECT_LE(result.not_before, after - skew + std::chrono::seconds(2));
+}
+
+TEST(SignerTest, OpenSslSignerRenewUsesConfiguredNotBeforeSkew) {
+  TempDir temp;
+  const auto issuer_pair = GenerateSelfSignedIssuer();
+  auto config = BuildSignerConfig(temp, issuer_pair);
+  config.not_before_skew = std::chrono::seconds(180);
+  OpenSslSigner signer(config);
+
+  SigningRequest issue_request;
+  issue_request.csr_der = GenerateCsrDer("svc.example.internal",
+                                         {"svc.example.internal"});
+  issue_request.subject_common_name = "principal-user";
+  issue_request.requested_ttl = std::chrono::minutes(20);
+  const auto issued = signer.Issue(issue_request);
+
+  RenewalSigningRequest renew_request;
+  renew_request.certificate_pem = issued.certificate_pem;
+  renew_request.requested_ttl = std::chrono::minutes(20);
+
+  const auto before = std::chrono::system_clock::now();
+  const auto renewed = signer.Renew(renew_request);
+  const auto after = std::chrono::system_clock::now();
+
+  EXPECT_GE(renewed.not_before,
+            before - config.not_before_skew - std::chrono::seconds(2));
+  EXPECT_LE(renewed.not_before,
+            after - config.not_before_skew + std::chrono::seconds(2));
+}
+
+TEST(SignerTest, OpenSslSignerRejectsUnsupportedHashPolicy) {
+  TempDir temp;
+  const auto issuer_pair = GenerateSelfSignedIssuer();
+  auto config = BuildSignerConfig(temp, issuer_pair);
+  config.hash_algorithm = "sha512";
+
+  try {
+    OpenSslSigner signer(config);
+    static_cast<void>(signer);
+    FAIL() << "expected SignerConfigError";
+  } catch (const SignerConfigError& ex) {
+    EXPECT_EQ(ex.code(), SignerConfigErrorCode::UnsupportedSigningAlgorithm);
+  }
+}
+
 TEST(SignerTest, OpenSslSignerRejectsMalformedCsr) {
   TempDir temp;
   const auto issuer_pair = GenerateSelfSignedIssuer();

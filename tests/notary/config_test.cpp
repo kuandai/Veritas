@@ -102,9 +102,31 @@ TEST(NotaryConfigTest, LoadsRateLimitOverrides) {
   EXPECT_EQ(config.rate_limit_peer_window_seconds, 120U);
 }
 
+TEST(NotaryConfigTest, LoadsSignerPolicyOverrides) {
+  RequiredEnv env;
+  ScopedEnv signer_skew("NOTARY_SIGNER_NOT_BEFORE_SKEW_SECONDS", "1200");
+  ScopedEnv signer_hash("NOTARY_SIGNER_HASH_ALGORITHM", "sha256");
+
+  const auto config = LoadConfig();
+  EXPECT_EQ(config.signer_not_before_skew_seconds, 1200U);
+  EXPECT_EQ(config.signer_hash_algorithm, "sha256");
+}
+
 TEST(NotaryConfigTest, InvalidRateLimitConfigFailsClosed) {
   RequiredEnv env;
   ScopedEnv invalid_identity_max("NOTARY_RATE_LIMIT_IDENTITY_MAX_REQUESTS", "0");
+  EXPECT_THROW(LoadConfig(), std::runtime_error);
+}
+
+TEST(NotaryConfigTest, InvalidSignerSkewConfigFailsClosed) {
+  RequiredEnv env;
+  ScopedEnv invalid_skew("NOTARY_SIGNER_NOT_BEFORE_SKEW_SECONDS", "3601");
+  EXPECT_THROW(LoadConfig(), std::runtime_error);
+}
+
+TEST(NotaryConfigTest, InvalidSignerHashConfigFailsClosed) {
+  RequiredEnv env;
+  ScopedEnv invalid_hash("NOTARY_SIGNER_HASH_ALGORITHM", "sha512");
   EXPECT_THROW(LoadConfig(), std::runtime_error);
 }
 

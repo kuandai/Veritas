@@ -10,6 +10,8 @@ struct SignerConfig {
   std::string issuer_cert_path;
   std::string issuer_key_path;
   std::string issuer_chain_path;
+  std::chrono::seconds not_before_skew{std::chrono::minutes(15)};
+  std::string hash_algorithm = "sha256";
 };
 
 enum class SignerConfigErrorCode {
@@ -20,6 +22,8 @@ enum class SignerConfigErrorCode {
   InvalidIssuerCertificate,
   InvalidIssuerPrivateKey,
   KeyCertificateMismatch,
+  InvalidNotBeforeSkew,
+  UnsupportedSigningAlgorithm,
 };
 
 class SignerConfigError : public std::runtime_error {

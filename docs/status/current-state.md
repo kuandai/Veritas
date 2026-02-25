@@ -194,7 +194,11 @@ Implemented
     match),
   - OpenSSL CSR issuance path (signature verification, SAN/CN/key policy, TTL
     clamp, key-usage/EKU extensions),
-  - OpenSSL renewal path from existing leaf cert identity material.
+  - OpenSSL renewal path from existing leaf cert identity material,
+  - configurable `not_before` skew backdating policy
+    (`NOTARY_SIGNER_NOT_BEFORE_SKEW_SECONDS`, default `900`, bounds `1..3600`),
+  - explicit signing-hash policy
+    (`NOTARY_SIGNER_HASH_ALGORITHM`, currently `sha256` only).
 - `IssueCertificate` implementation is wired:
   - deterministic request validation (token, CSR, idempotency, minimum TTL),
   - authz enforcement via Gatekeeper token status,

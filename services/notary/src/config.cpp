@@ -17,6 +17,14 @@ std::string GetEnvOrEmpty(const char* name) {
   return value ? std::string(value) : std::string();
 }
 
+std::string ToLowerAscii(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char ch) {
+                   return static_cast<char>(std::tolower(ch));
+                 });
+  return value;
+}
+
 bool GetEnvOrDefaultBool(const char* name, bool fallback) {
   const char* value = std::getenv(name);
   if (!value || value[0] == '\0') {
@@ -77,6 +85,16 @@ NotaryConfig LoadConfig() {
   config.signer_cert_path = GetEnvOrEmpty("NOTARY_SIGNER_CERT");
   config.signer_key_path = GetEnvOrEmpty("NOTARY_SIGNER_KEY");
   config.signer_chain_path = GetEnvOrEmpty("NOTARY_SIGNER_CHAIN");
+  config.signer_not_before_skew_seconds = GetEnvOrDefaultSize(
+      "NOTARY_SIGNER_NOT_BEFORE_SKEW_SECONDS",
+      config.signer_not_before_skew_seconds);
+  const std::string signer_hash =
+      GetEnvOrEmpty("NOTARY_SIGNER_HASH_ALGORITHM");
+  if (!signer_hash.empty()) {
+    config.signer_hash_algorithm = ToLowerAscii(signer_hash);
+  } else {
+    config.signer_hash_algorithm = "sha256";
+  }
   config.gatekeeper_target = GetEnvOrEmpty("NOTARY_GATEKEEPER_TARGET");
   config.gatekeeper_ca_path = GetEnvOrEmpty("NOTARY_GATEKEEPER_CA_BUNDLE");
   config.gatekeeper_allow_insecure =
@@ -117,6 +135,14 @@ NotaryConfig LoadConfig() {
   }
   if (config.signer_key_path.empty()) {
     throw std::runtime_error("NOTARY_SIGNER_KEY is required");
+  }
+  if (config.signer_not_before_skew_seconds > 3600) {
+    throw std::runtime_error(
+        "NOTARY_SIGNER_NOT_BEFORE_SKEW_SECONDS must be between 1 and 3600");
+  }
+  if (config.signer_hash_algorithm != "sha256") {
+    throw std::runtime_error(
+        "NOTARY_SIGNER_HASH_ALGORITHM must be sha256");
   }
   if (config.gatekeeper_target.empty()) {
     throw std::runtime_error("NOTARY_GATEKEEPER_TARGET is required");

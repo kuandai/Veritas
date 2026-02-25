@@ -41,6 +41,10 @@ authenticated authorization context.
   - CSR parse/signature verification,
   - SAN/CN/key-policy checks,
   - bounded TTL enforcement,
+  - configurable `not_before` backdating skew
+    (`NOTARY_SIGNER_NOT_BEFORE_SKEW_SECONDS`, default `900`, bounds `1..3600`),
+  - explicit signer hash policy
+    (`NOTARY_SIGNER_HASH_ALGORITHM`, currently `sha256` only),
   - leaf signing/renewal with key-usage/EKU extensions,
   - renewal from existing certificate identity material (subject + SAN + key),
   - chain payload passthrough from configured issuer chain file.

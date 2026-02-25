@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <fstream>
 #include <memory>
@@ -58,7 +59,8 @@ struct GeneralNamesDeleter {
 
 constexpr auto kMinimumTtl = std::chrono::seconds(std::chrono::minutes(1));
 constexpr auto kMaximumTtl = std::chrono::seconds(std::chrono::hours(24));
-constexpr auto kNotBeforeSkew = std::chrono::seconds(60);
+constexpr auto kMinNotBeforeSkew = std::chrono::seconds(1);
+constexpr auto kMaxNotBeforeSkew = std::chrono::seconds(3600);
 
 std::unique_ptr<BIO, BioDeleter> OpenFileBio(
     const std::string& path, SignerConfigErrorCode error_code,
@@ -429,6 +431,37 @@ std::string X509ToPem(X509* cert) {
   return std::string(mem->data, mem->length);
 }
 
+std::string ToLowerAscii(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char ch) {
+                   return static_cast<char>(std::tolower(ch));
+                 });
+  return value;
+}
+
+void ValidateSignerPolicy(const SignerConfig& config) {
+  if (config.not_before_skew < kMinNotBeforeSkew ||
+      config.not_before_skew > kMaxNotBeforeSkew) {
+    throw SignerConfigError(SignerConfigErrorCode::InvalidNotBeforeSkew,
+                            "not_before_skew is outside policy bounds");
+  }
+
+  const auto normalized = ToLowerAscii(config.hash_algorithm);
+  if (normalized != "sha256") {
+    throw SignerConfigError(SignerConfigErrorCode::UnsupportedSigningAlgorithm,
+                            "unsupported signer hash algorithm");
+  }
+}
+
+const EVP_MD* ResolveSigningDigest(const SignerConfig& config) {
+  const auto normalized = ToLowerAscii(config.hash_algorithm);
+  if (normalized == "sha256") {
+    return EVP_sha256();
+  }
+  throw SignerIssueError(SignerIssueErrorCode::Internal,
+                         "unsupported signer hash algorithm");
+}
+
 }  // namespace
 
 SignerConfigError::SignerConfigError(SignerConfigErrorCode code,
@@ -482,6 +515,7 @@ void ValidateSignerKeyMaterial(const SignerConfig& config) {
 
 OpenSslSigner::OpenSslSigner(SignerConfig config) : config_(std::move(config)) {
   ValidateSignerKeyMaterial(config_);
+  ValidateSignerPolicy(config_);
 }
 
 const SignerConfig& OpenSslSigner::config() const noexcept { return config_; }
@@ -497,6 +531,8 @@ SigningResult OpenSslSigner::Issue(const SigningRequest& request) {
   }
 
   const auto ttl = ClampRequestedTtl(request.requested_ttl);
+  const auto not_before_skew = config_.not_before_skew;
+  const EVP_MD* digest = ResolveSigningDigest(config_);
 
   auto issuer_cert = LoadIssuerCertificate(config_.issuer_cert_path);
   auto issuer_key = LoadIssuerPrivateKey(config_.issuer_key_path);
@@ -531,10 +567,10 @@ SigningResult OpenSslSigner::Issue(const SigningRequest& request) {
   }
 
   const auto now = std::chrono::system_clock::now();
-  const auto not_before = now - kNotBeforeSkew;
+  const auto not_before = now - not_before_skew;
   const auto not_after = now + ttl;
   if (!X509_gmtime_adj(X509_getm_notBefore(leaf.get()),
-                       -static_cast<long>(kNotBeforeSkew.count())) ||
+                       -static_cast<long>(not_before_skew.count())) ||
       !X509_gmtime_adj(X509_getm_notAfter(leaf.get()),
                        static_cast<long>(ttl.count()))) {
     throw SignerIssueError(SignerIssueErrorCode::Internal,
@@ -549,7 +585,7 @@ SigningResult OpenSslSigner::Issue(const SigningRequest& request) {
                "clientAuth,serverAuth");
   CopySanExtensionFromCsr(csr.get(), leaf.get());
 
-  if (X509_sign(leaf.get(), issuer_key.get(), EVP_sha256()) <= 0) {
+  if (X509_sign(leaf.get(), issuer_key.get(), digest) <= 0) {
     throw SignerIssueError(SignerIssueErrorCode::Internal,
                            "failed to sign certificate");
   }
@@ -572,6 +608,8 @@ SigningResult OpenSslSigner::Renew(const RenewalSigningRequest& request) {
   }
 
   const auto ttl = ClampRequestedTtl(request.requested_ttl);
+  const auto not_before_skew = config_.not_before_skew;
+  const EVP_MD* digest = ResolveSigningDigest(config_);
   auto issuer_cert = LoadIssuerCertificate(config_.issuer_cert_path);
   auto issuer_key = LoadIssuerPrivateKey(config_.issuer_key_path);
   auto current_leaf = ParseCertificatePem(request.certificate_pem);
@@ -607,10 +645,10 @@ SigningResult OpenSslSigner::Renew(const RenewalSigningRequest& request) {
   }
 
   const auto now = std::chrono::system_clock::now();
-  const auto not_before = now - kNotBeforeSkew;
+  const auto not_before = now - not_before_skew;
   const auto not_after = now + ttl;
   if (!X509_gmtime_adj(X509_getm_notBefore(renewed_leaf.get()),
-                       -static_cast<long>(kNotBeforeSkew.count())) ||
+                       -static_cast<long>(not_before_skew.count())) ||
       !X509_gmtime_adj(X509_getm_notAfter(renewed_leaf.get()),
                        static_cast<long>(ttl.count()))) {
     throw SignerIssueError(SignerIssueErrorCode::Internal,
@@ -625,7 +663,7 @@ SigningResult OpenSslSigner::Renew(const RenewalSigningRequest& request) {
                "clientAuth,serverAuth");
   CopySanExtensionFromCertificate(current_leaf.get(), renewed_leaf.get());
 
-  if (X509_sign(renewed_leaf.get(), issuer_key.get(), EVP_sha256()) <= 0) {
+  if (X509_sign(renewed_leaf.get(), issuer_key.get(), digest) <= 0) {
     throw SignerIssueError(SignerIssueErrorCode::Internal,
                            "failed to sign renewed certificate");
   }

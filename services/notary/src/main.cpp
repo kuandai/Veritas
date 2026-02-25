@@ -39,10 +39,15 @@ int main() {
     store_config.redis_uri = config.store_uri;
 
     auto issuance_store = veritas::shared::CreateIssuanceStore(store_config);
-    auto signer = std::make_shared<veritas::notary::OpenSslSigner>(
-        veritas::notary::SignerConfig{config.signer_cert_path,
-                                      config.signer_key_path,
-                                      config.signer_chain_path});
+    veritas::notary::SignerConfig signer_config;
+    signer_config.issuer_cert_path = config.signer_cert_path;
+    signer_config.issuer_key_path = config.signer_key_path;
+    signer_config.issuer_chain_path = config.signer_chain_path;
+    signer_config.not_before_skew =
+        std::chrono::seconds(config.signer_not_before_skew_seconds);
+    signer_config.hash_algorithm = config.signer_hash_algorithm;
+    auto signer =
+        std::make_shared<veritas::notary::OpenSslSigner>(std::move(signer_config));
 
     veritas::notary::FixedWindowRateLimiterConfig peer_limiter_config;
     peer_limiter_config.max_requests_per_window =

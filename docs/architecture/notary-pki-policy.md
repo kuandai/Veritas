@@ -3,8 +3,7 @@
 ## Scope
 
 This policy defines the Notary certificate-profile contract and lifecycle
-semantics. It is normative for future implementation but does not imply that
-all behaviors are implemented in code today.
+semantics as implemented in the current codebase.
 
 ## Certificate Profile
 
@@ -18,8 +17,8 @@ all behaviors are implemented in code today.
 ### SAN/CN Rules
 
 - SAN is authoritative for service identity.
-- CN, when present, must be consistent with SAN policy and is overrideable by
-  policy.
+- CN is set from authoritative principal identity from Gatekeeper authz
+  context, not from CSR subject identity claims.
 - Unsupported SAN types are rejected.
 
 ### Key Usage / EKU Baseline
@@ -27,11 +26,16 @@ all behaviors are implemented in code today.
 - Leaf certificates must include key usage and EKU compatible with client auth
   and service-to-service auth as policy permits.
 - CA key usage is never returned to clients in leaf material.
+- Signer hash policy is explicit and fail-closed:
+  - `NOTARY_SIGNER_HASH_ALGORITHM=sha256` (currently the only accepted value).
 
 ### Validity Window Baseline
 
 - Issued certificates have bounded lifetimes set by policy maximums, independent
   of requested TTL.
+- `not_before` is backdated by policy skew to tolerate clock drift:
+  - `NOTARY_SIGNER_NOT_BEFORE_SKEW_SECONDS` default `900` (15 minutes),
+  - accepted bounds `1..3600` seconds.
 - Renewal requests are clamped to policy limits.
 - Overlap window behavior is deterministic and policy-controlled.
 
@@ -49,15 +53,16 @@ all behaviors are implemented in code today.
 - Re-revocation returns deterministic status (`ALREADY_REVOKED` equivalent).
 - Revocation reasons are taxonomy-driven for audit/analytics consistency.
 
-### Revocation Reason Taxonomy (initial)
+### Revocation Reason Taxonomy (current)
 
 - `KEY_COMPROMISE`
-- `CREDENTIAL_COMPROMISE`
-- `POLICY_VIOLATION`
+- `CA_COMPROMISE`
+- `AFFILIATION_CHANGED`
+- `SUPERSEDED`
 - `CESSATION_OF_OPERATION`
-- `ADMINISTRATIVE_ACTION`
+- `PRIVILEGE_WITHDRAWN`
+- `POLICY_VIOLATION`
 - `TOKEN_REVOKED`
-- `UNSPECIFIED`
 
 ## Error Semantics Contract
 
@@ -68,5 +73,5 @@ all behaviors are implemented in code today.
 
 ## Implementation Status Notes
 
-- This policy is documented and frozen as Sprint 2 baseline.
-- Final issuance behavior remains pending Notary runtime implementation.
+- Policy controls above are implemented in `services/notary/src/signer.*` and
+  Notary runtime config parsing.

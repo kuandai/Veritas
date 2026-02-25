@@ -20,6 +20,8 @@ struct NotaryConfig {
   std::string signer_cert_path;
   std::string signer_key_path;
   std::string signer_chain_path;
+  size_t signer_not_before_skew_seconds = 900;
+  std::string signer_hash_algorithm = "sha256";
 
   std::string gatekeeper_target;
   std::string gatekeeper_ca_path;
