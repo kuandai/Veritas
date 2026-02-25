@@ -49,6 +49,14 @@ token rotation callbacks, and a security context for transport layers (TLS/QUIC)
   - LKG behavior during transient failures and lock transition after
     grace-window exhaustion.
   - Auth-server-unreachable and persistent-rotation-failure alerts.
+  - Optional certificate lifecycle coupling:
+    - `ConfigureCertificateLifecycle(...)` binds Notary issue/renew to the
+      rotation worker,
+    - successful token refresh can trigger Notary issue/renew and context swap,
+    - context swap is performed only after new cert/private-key context
+      validation succeeds,
+    - failed cert lifecycle updates preserve the last-known-good context and
+      are treated as rotation failures for backoff/alerts.
 - Revocation lifecycle:
   - `StartRevocationMonitor`/`StopRevocationMonitor` polling loop.
   - Client-side `GetTokenStatus` checks via Gatekeeper.
@@ -61,6 +69,8 @@ token rotation callbacks, and a security context for transport layers (TLS/QUIC)
   - Uses the authenticated refresh token from `IdentityManager` state.
   - Enforces `IdentityState::Ready` before Notary operations.
   - Maps Notary failures to `IdentityErrorCode::NotaryRequestFailed`.
+  - Successful issue/renew operations update in-memory active certificate serial
+    tracking used by background lifecycle rotation.
 - Transport context hardening:
   - Thread-safe `SSL_CTX` swap with reader-safe shared ownership.
   - TLS 1.3-only context construction.

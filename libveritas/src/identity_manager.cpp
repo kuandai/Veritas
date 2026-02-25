@@ -223,21 +223,72 @@ std::string RequireRefreshToken(const std::optional<AuthResult>& identity) {
   return identity->refresh_token;
 }
 
+std::atomic<std::uint64_t> g_rotation_idempotency_counter{0};
+
 }  // namespace
 
 IdentityManager::IdentityManager(CredentialProvider credential_provider,
                                  std::optional<storage::TokenStoreConfig> token_store_config,
                                  EntropyChecker entropy_checker,
-                                 AuthRunner auth_runner)
+                                 AuthRunner auth_runner,
+                                 NotaryIssueRunner notary_issue_runner,
+                                 NotaryRenewRunner notary_renew_runner,
+                                 NotaryRevokeRunner notary_revoke_runner,
+                                 NotaryStatusRunner notary_status_runner)
     : credential_provider_(std::move(credential_provider)),
       entropy_checker_(std::move(entropy_checker)),
-      auth_runner_(std::move(auth_runner)) {
+      auth_runner_(std::move(auth_runner)),
+      notary_issue_runner_(std::move(notary_issue_runner)),
+      notary_renew_runner_(std::move(notary_renew_runner)),
+      notary_revoke_runner_(std::move(notary_revoke_runner)),
+      notary_status_runner_(std::move(notary_status_runner)) {
   if (credential_provider_) {
     rotation_provider_ =
         std::make_shared<LambdaRotationCredentialProvider>(credential_provider_);
   }
 
   if (!token_store_config.has_value()) {
+    if (!notary_issue_runner_) {
+      notary_issue_runner_ =
+          [](const NotaryClientConfig& config, std::string_view refresh_token,
+             const std::string& csr_der, std::uint32_t requested_ttl_seconds,
+             const std::string& idempotency_key) {
+            notary_client::NotaryClient client(config);
+            return client.IssueCertificate(refresh_token, csr_der,
+                                           requested_ttl_seconds,
+                                           idempotency_key);
+          };
+    }
+    if (!notary_renew_runner_) {
+      notary_renew_runner_ =
+          [](const NotaryClientConfig& config, std::string_view refresh_token,
+             const std::string& certificate_serial,
+             std::uint32_t requested_ttl_seconds,
+             const std::string& idempotency_key) {
+            notary_client::NotaryClient client(config);
+            return client.RenewCertificate(refresh_token, certificate_serial,
+                                           requested_ttl_seconds,
+                                           idempotency_key);
+          };
+    }
+    if (!notary_revoke_runner_) {
+      notary_revoke_runner_ =
+          [](const NotaryClientConfig& config, std::string_view refresh_token,
+             const std::string& certificate_serial, const std::string& reason,
+             const std::string& actor) {
+            notary_client::NotaryClient client(config);
+            client.RevokeCertificate(refresh_token, certificate_serial, reason,
+                                     actor);
+          };
+    }
+    if (!notary_status_runner_) {
+      notary_status_runner_ =
+          [](const NotaryClientConfig& config, std::string_view refresh_token,
+             const std::string& certificate_serial) {
+            notary_client::NotaryClient client(config);
+            return client.GetCertificateStatus(refresh_token, certificate_serial);
+          };
+    }
     return;
   }
   token_store_ = storage::CreateTokenStore(*token_store_config);
@@ -248,6 +299,47 @@ IdentityManager::IdentityManager(CredentialProvider credential_provider,
       persisted_identity_ = ToAuthResult(*loaded);
     }
     TransitionTo(IdentityState::Ready);
+  }
+
+  if (!notary_issue_runner_) {
+    notary_issue_runner_ =
+        [](const NotaryClientConfig& config, std::string_view refresh_token,
+           const std::string& csr_der, std::uint32_t requested_ttl_seconds,
+           const std::string& idempotency_key) {
+          notary_client::NotaryClient client(config);
+          return client.IssueCertificate(refresh_token, csr_der,
+                                         requested_ttl_seconds,
+                                         idempotency_key);
+        };
+  }
+  if (!notary_renew_runner_) {
+    notary_renew_runner_ =
+        [](const NotaryClientConfig& config, std::string_view refresh_token,
+           const std::string& certificate_serial,
+           std::uint32_t requested_ttl_seconds,
+           const std::string& idempotency_key) {
+          notary_client::NotaryClient client(config);
+          return client.RenewCertificate(refresh_token, certificate_serial,
+                                         requested_ttl_seconds, idempotency_key);
+        };
+  }
+  if (!notary_revoke_runner_) {
+    notary_revoke_runner_ =
+        [](const NotaryClientConfig& config, std::string_view refresh_token,
+           const std::string& certificate_serial, const std::string& reason,
+           const std::string& actor) {
+          notary_client::NotaryClient client(config);
+          client.RevokeCertificate(refresh_token, certificate_serial, reason,
+                                   actor);
+        };
+  }
+  if (!notary_status_runner_) {
+    notary_status_runner_ =
+        [](const NotaryClientConfig& config, std::string_view refresh_token,
+           const std::string& certificate_serial) {
+          notary_client::NotaryClient client(config);
+          return client.GetCertificateStatus(refresh_token, certificate_serial);
+        };
   }
 }
 
@@ -368,6 +460,36 @@ AuthResult IdentityManager::Authenticate(const GatekeeperClientConfig& config,
   return Authenticate(config, username, credential_provider_());
 }
 
+CertificateMaterial IdentityManager::RunNotaryIssue(
+    const NotaryClientConfig& config, std::string_view refresh_token,
+    const std::string& csr_der, std::uint32_t requested_ttl_seconds,
+    const std::string& idempotency_key) const {
+  return notary_issue_runner_(config, refresh_token, csr_der,
+                              requested_ttl_seconds, idempotency_key);
+}
+
+CertificateMaterial IdentityManager::RunNotaryRenew(
+    const NotaryClientConfig& config, std::string_view refresh_token,
+    const std::string& certificate_serial, std::uint32_t requested_ttl_seconds,
+    const std::string& idempotency_key) const {
+  return notary_renew_runner_(config, refresh_token, certificate_serial,
+                              requested_ttl_seconds, idempotency_key);
+}
+
+void IdentityManager::RunNotaryRevoke(const NotaryClientConfig& config,
+                                      std::string_view refresh_token,
+                                      const std::string& certificate_serial,
+                                      const std::string& reason,
+                                      const std::string& actor) const {
+  notary_revoke_runner_(config, refresh_token, certificate_serial, reason, actor);
+}
+
+CertificateStatusResult IdentityManager::RunNotaryStatus(
+    const NotaryClientConfig& config, std::string_view refresh_token,
+    const std::string& certificate_serial) const {
+  return notary_status_runner_(config, refresh_token, certificate_serial);
+}
+
 CertificateMaterial IdentityManager::IssueCertificate(
     const NotaryClientConfig& config, const std::string& csr_der,
     std::uint32_t requested_ttl_seconds, const std::string& idempotency_key) {
@@ -384,10 +506,19 @@ CertificateMaterial IdentityManager::IssueCertificate(
   }
 
   try {
-    notary_client::NotaryClient client(config);
-    auto result = client.IssueCertificate(refresh_token, csr_der,
-                                          requested_ttl_seconds,
-                                          idempotency_key);
+    auto result = RunNotaryIssue(config, refresh_token, csr_der,
+                                 requested_ttl_seconds, idempotency_key);
+    std::function<void(const std::string&)> observer;
+    {
+      std::lock_guard<std::mutex> lock(rotation_mutex_);
+      active_certificate_serial_ = result.certificate_serial;
+      if (certificate_lifecycle_config_.has_value()) {
+        observer = certificate_lifecycle_config_->serial_observer;
+      }
+    }
+    if (observer) {
+      observer(result.certificate_serial);
+    }
     SetLastError(IdentityErrorCode::None);
     return result;
   } catch (const notary_client::NotaryClientError& ex) {
@@ -415,10 +546,19 @@ CertificateMaterial IdentityManager::RenewCertificate(
   }
 
   try {
-    notary_client::NotaryClient client(config);
-    auto result = client.RenewCertificate(refresh_token, certificate_serial,
-                                          requested_ttl_seconds,
-                                          idempotency_key);
+    auto result = RunNotaryRenew(config, refresh_token, certificate_serial,
+                                 requested_ttl_seconds, idempotency_key);
+    std::function<void(const std::string&)> observer;
+    {
+      std::lock_guard<std::mutex> lock(rotation_mutex_);
+      active_certificate_serial_ = result.certificate_serial;
+      if (certificate_lifecycle_config_.has_value()) {
+        observer = certificate_lifecycle_config_->serial_observer;
+      }
+    }
+    if (observer) {
+      observer(result.certificate_serial);
+    }
     SetLastError(IdentityErrorCode::None);
     return result;
   } catch (const notary_client::NotaryClientError& ex) {
@@ -447,8 +587,7 @@ void IdentityManager::RevokeCertificate(const NotaryClientConfig& config,
   }
 
   try {
-    notary_client::NotaryClient client(config);
-    client.RevokeCertificate(refresh_token, certificate_serial, reason, actor);
+    RunNotaryRevoke(config, refresh_token, certificate_serial, reason, actor);
     SetLastError(IdentityErrorCode::None);
   } catch (const notary_client::NotaryClientError& ex) {
     SetLastError(IdentityErrorCode::NotaryRequestFailed);
@@ -474,8 +613,7 @@ CertificateStatusResult IdentityManager::GetCertificateStatus(
   }
 
   try {
-    notary_client::NotaryClient client(config);
-    auto result = client.GetCertificateStatus(refresh_token, certificate_serial);
+    auto result = RunNotaryStatus(config, refresh_token, certificate_serial);
     SetLastError(IdentityErrorCode::None);
     return result;
   } catch (const notary_client::NotaryClientError& ex) {
@@ -536,6 +674,45 @@ void IdentityManager::SetRotationCredentialProvider(
   rotation_provider_ = std::move(provider);
 }
 
+void IdentityManager::ConfigureCertificateLifecycle(
+    CertificateLifecycleConfig config) {
+  if (!config.csr_provider) {
+    throw std::runtime_error("certificate lifecycle CSR provider is required");
+  }
+  if (!config.private_key_provider) {
+    throw std::runtime_error(
+        "certificate lifecycle private key provider is required");
+  }
+  if (config.requested_ttl_seconds < 60) {
+    throw std::runtime_error(
+        "certificate lifecycle requested_ttl_seconds must be at least 60");
+  }
+  if (config.alpn.empty()) {
+    throw std::runtime_error("certificate lifecycle ALPN is required");
+  }
+
+  std::optional<std::string> seeded_serial;
+  if (config.serial_provider) {
+    seeded_serial = config.serial_provider();
+  }
+
+  std::lock_guard<std::mutex> lock(rotation_mutex_);
+  certificate_lifecycle_config_ = std::move(config);
+  if (seeded_serial.has_value() && !seeded_serial->empty()) {
+    active_certificate_serial_ = *seeded_serial;
+  }
+}
+
+void IdentityManager::DisableCertificateLifecycle() {
+  std::lock_guard<std::mutex> lock(rotation_mutex_);
+  certificate_lifecycle_config_.reset();
+}
+
+bool IdentityManager::IsCertificateLifecycleConfigured() {
+  std::lock_guard<std::mutex> lock(rotation_mutex_);
+  return certificate_lifecycle_config_.has_value();
+}
+
 std::chrono::system_clock::time_point IdentityManager::ComputeRotationDeadline(
     const AuthResult& identity,
     double refresh_ratio,
@@ -587,6 +764,75 @@ std::chrono::milliseconds IdentityManager::ComputeBackoffDelay(
   const std::int64_t clamped =
       std::clamp<std::int64_t>(with_jitter, 1, max.count());
   return std::chrono::milliseconds(clamped);
+}
+
+std::string IdentityManager::NextRotationIdempotencyKey(
+    std::string_view operation) const {
+  const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+  const auto seq = g_rotation_idempotency_counter.fetch_add(1);
+  return std::string(operation) + "-" + std::to_string(now) + "-" +
+         std::to_string(seq);
+}
+
+bool IdentityManager::RotateCertificateLifecycle() {
+  CertificateLifecycleConfig lifecycle;
+  std::optional<std::string> serial;
+  {
+    std::lock_guard<std::mutex> lock(rotation_mutex_);
+    if (!certificate_lifecycle_config_.has_value()) {
+      return true;
+    }
+    lifecycle = *certificate_lifecycle_config_;
+    serial = active_certificate_serial_;
+  }
+
+  if (!serial.has_value() && lifecycle.serial_provider) {
+    serial = lifecycle.serial_provider();
+  }
+
+  std::string refresh_token;
+  {
+    std::shared_lock lock(state_mutex_);
+    refresh_token = RequireRefreshToken(persisted_identity_);
+  }
+
+  try {
+    CertificateMaterial material;
+    if (serial.has_value() && !serial->empty()) {
+      material = RunNotaryRenew(lifecycle.notary, refresh_token, *serial,
+                                lifecycle.requested_ttl_seconds,
+                                NextRotationIdempotencyKey("renew"));
+    } else {
+      const std::string csr_der = lifecycle.csr_provider();
+      material = RunNotaryIssue(lifecycle.notary, refresh_token, csr_der,
+                                lifecycle.requested_ttl_seconds,
+                                NextRotationIdempotencyKey("issue"));
+    }
+
+    TransportContextConfig context_config;
+    context_config.certificate_chain_pem =
+        material.certificate_pem + material.certificate_chain_pem;
+    context_config.private_key_pem = lifecycle.private_key_provider();
+    context_config.alpn = lifecycle.alpn;
+    UpdateSecurityContext(context_config);
+
+    std::function<void(const std::string&)> observer;
+    {
+      std::lock_guard<std::mutex> lock(rotation_mutex_);
+      active_certificate_serial_ = material.certificate_serial;
+      if (certificate_lifecycle_config_.has_value()) {
+        observer = certificate_lifecycle_config_->serial_observer;
+      }
+    }
+    if (observer) {
+      observer(material.certificate_serial);
+    }
+    return true;
+  } catch (const IdentityManagerError&) {
+    throw;
+  } catch (const std::exception& ex) {
+    throw IdentityManagerError(IdentityErrorCode::NotaryRequestFailed, ex.what());
+  }
 }
 
 void IdentityManager::StartRotation(const GatekeeperClientConfig& config,
@@ -730,6 +976,7 @@ void IdentityManager::RotationLoop(std::stop_token stop_token) {
       try {
         const std::string credential = provider->GetCredential();
         Authenticate(config, username, credential);
+        RotateCertificateLifecycle();
         consecutive_rotation_failures = 0;
         rotated = true;
         if (rotation_callback_) {
@@ -745,6 +992,8 @@ void IdentityManager::RotationLoop(std::stop_token stop_token) {
           detail = "auth_server_unavailable";
         } else if (ex.code() == IdentityErrorCode::EntropyUnavailable) {
           detail = "entropy_unavailable";
+        } else if (ex.code() == IdentityErrorCode::NotaryRequestFailed) {
+          detail = "notary_request_failed";
         }
         EmitAnalytics(AnalyticsEventType::RotationFailure,
                       consecutive_rotation_failures, detail);

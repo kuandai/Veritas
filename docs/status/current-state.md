@@ -75,7 +75,10 @@ Implemented
   - configurable 70/30 scheduling,
   - bounded exponential backoff with jitter,
   - auth-server-unreachable + persistent-rotation-failure alerts,
-  - LKG retention during transient failures.
+  - LKG retention during transient failures,
+  - optional Notary-coupled certificate lifecycle path via
+    `ConfigureCertificateLifecycle(...)`,
+  - cert/context swap only after successful Notary + context validation.
 - Transport/security context management now supports:
   - thread-safe `SSL_CTX` swap with shared ownership,
   - TLS 1.3 enforcement in context construction,
@@ -106,6 +109,8 @@ Implemented
   - Operations consume the authenticated refresh token from current identity
     state and map Notary failures to
     `IdentityErrorCode::NotaryRequestFailed`.
+  - Successful issue/renew updates active in-memory certificate-serial tracking
+    used by background rotation lifecycle.
 
 Placeholders / incomplete
 - Rotation worker depends on configured credential provider and auth target.

@@ -274,6 +274,181 @@ TEST(RotationWorkerTest, KeepsLkgAndRecoversAfterOutage) {
   EXPECT_GT(unreachable_alerts.load(), 0);
 }
 
+TEST(RotationWorkerTest, LifecycleIssuePathUpdatesSecurityContext) {
+  const auto initial_pair = GenerateSelfSigned();
+  const auto rotated_pair = GenerateSelfSigned();
+
+  std::atomic<int> issue_calls{0};
+  std::atomic<int> renew_calls{0};
+  std::atomic<bool> saw_serial_update{false};
+  std::string observed_serial;
+
+  IdentityManager manager(
+      [] { return std::string("pw"); }, std::nullopt, &ReadyEntropy,
+      [&](const GatekeeperClientConfig&, const std::string&, const std::string&)
+          -> AuthResult {
+        AuthResult result;
+        result.user_uuid = "user-1";
+        result.refresh_token = "refresh-token";
+        result.issued_at = std::chrono::system_clock::now();
+        result.expires_at = std::chrono::system_clock::now() + std::chrono::hours(1);
+        return result;
+      },
+      [&](const NotaryClientConfig&, std::string_view, const std::string&,
+          std::uint32_t, const std::string&) -> CertificateMaterial {
+        ++issue_calls;
+        CertificateMaterial material;
+        material.certificate_serial = "serial-issued";
+        material.certificate_pem = rotated_pair.cert_pem;
+        material.certificate_chain_pem = rotated_pair.cert_pem;
+        material.not_before = std::chrono::system_clock::now();
+        material.not_after = material.not_before + std::chrono::hours(1);
+        return material;
+      },
+      [&](const NotaryClientConfig&, std::string_view, const std::string&,
+          std::uint32_t, const std::string&) -> CertificateMaterial {
+        ++renew_calls;
+        CertificateMaterial material;
+        material.certificate_serial = "serial-renewed";
+        material.certificate_pem = rotated_pair.cert_pem;
+        material.certificate_chain_pem = rotated_pair.cert_pem;
+        material.not_before = std::chrono::system_clock::now();
+        material.not_after = material.not_before + std::chrono::hours(1);
+        return material;
+      });
+
+  GatekeeperClientConfig gatekeeper;
+  gatekeeper.target = "127.0.0.1:50051";
+  gatekeeper.allow_insecure = true;
+  ASSERT_NO_THROW(static_cast<void>(manager.Authenticate(gatekeeper, "alice", "pw")));
+
+  TransportContextConfig initial_context;
+  initial_context.certificate_chain_pem = initial_pair.cert_pem + initial_pair.cert_pem;
+  initial_context.private_key_pem = initial_pair.key_pem;
+  initial_context.alpn = "h3";
+  manager.UpdateSecurityContext(initial_context);
+  const auto before_ctx = manager.get_quic_context().ctx;
+  ASSERT_NE(before_ctx, nullptr);
+
+  CertificateLifecycleConfig lifecycle;
+  lifecycle.notary.target = "127.0.0.1:50052";
+  lifecycle.notary.allow_insecure = true;
+  lifecycle.csr_provider = [] { return std::string("csr-der"); };
+  lifecycle.private_key_provider = [rotated_pair] { return rotated_pair.key_pem; };
+  lifecycle.requested_ttl_seconds = 600;
+  lifecycle.alpn = "h3";
+  lifecycle.serial_observer = [&](const std::string& serial) {
+    observed_serial = serial;
+    saw_serial_update.store(true);
+  };
+  manager.ConfigureCertificateLifecycle(lifecycle);
+
+  RotationPolicy policy;
+  policy.refresh_ratio = 0.0;
+  policy.minimum_interval = std::chrono::milliseconds(10);
+  policy.retry_initial = std::chrono::milliseconds(10);
+  policy.retry_max = std::chrono::milliseconds(20);
+  policy.max_retries = 2;
+  policy.lkg_grace_period = std::chrono::seconds(60);
+  manager.StartRotation(gatekeeper, "alice", policy);
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  while (!saw_serial_update.load() && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  manager.StopRotation();
+
+  EXPECT_TRUE(saw_serial_update.load());
+  EXPECT_EQ(observed_serial, "serial-issued");
+  EXPECT_GT(issue_calls.load(), 0);
+  EXPECT_EQ(renew_calls.load(), 0);
+  EXPECT_NE(manager.get_quic_context().ctx, before_ctx);
+}
+
+TEST(RotationWorkerTest, LifecycleFailureKeepsLastKnownGoodContext) {
+  const auto initial_pair = GenerateSelfSigned();
+  const auto rotated_pair = GenerateSelfSigned();
+
+  std::atomic<int> issue_calls{0};
+  std::vector<AnalyticsEvent> events;
+
+  IdentityManager manager(
+      [] { return std::string("pw"); }, std::nullopt, &ReadyEntropy,
+      [&](const GatekeeperClientConfig&, const std::string&, const std::string&)
+          -> AuthResult {
+        AuthResult result;
+        result.user_uuid = "user-1";
+        result.refresh_token = "refresh-token";
+        result.issued_at = std::chrono::system_clock::now();
+        result.expires_at = std::chrono::system_clock::now() + std::chrono::hours(1);
+        return result;
+      },
+      [&](const NotaryClientConfig&, std::string_view, const std::string&,
+          std::uint32_t, const std::string&) -> CertificateMaterial {
+        ++issue_calls;
+        CertificateMaterial material;
+        material.certificate_serial = "serial-issued";
+        material.certificate_pem = rotated_pair.cert_pem;
+        material.certificate_chain_pem = "";
+        material.not_before = std::chrono::system_clock::now();
+        material.not_after = material.not_before + std::chrono::hours(1);
+        return material;
+      });
+
+  manager.on_analytics([&](const AnalyticsEvent& event) { events.push_back(event); });
+
+  GatekeeperClientConfig gatekeeper;
+  gatekeeper.target = "127.0.0.1:50051";
+  gatekeeper.allow_insecure = true;
+  ASSERT_NO_THROW(static_cast<void>(manager.Authenticate(gatekeeper, "alice", "pw")));
+
+  TransportContextConfig initial_context;
+  initial_context.certificate_chain_pem = initial_pair.cert_pem + initial_pair.cert_pem;
+  initial_context.private_key_pem = initial_pair.key_pem;
+  initial_context.alpn = "h3";
+  manager.UpdateSecurityContext(initial_context);
+  const auto before_ctx = manager.get_quic_context().ctx;
+  ASSERT_NE(before_ctx, nullptr);
+
+  CertificateLifecycleConfig lifecycle;
+  lifecycle.notary.target = "127.0.0.1:50052";
+  lifecycle.notary.allow_insecure = true;
+  lifecycle.csr_provider = [] { return std::string("csr-der"); };
+  lifecycle.private_key_provider = [rotated_pair] { return rotated_pair.key_pem; };
+  lifecycle.requested_ttl_seconds = 600;
+  lifecycle.alpn = "h3";
+  manager.ConfigureCertificateLifecycle(lifecycle);
+
+  RotationPolicy policy;
+  policy.refresh_ratio = 0.0;
+  policy.minimum_interval = std::chrono::milliseconds(10);
+  policy.retry_initial = std::chrono::milliseconds(10);
+  policy.retry_max = std::chrono::milliseconds(20);
+  policy.max_retries = 1;
+  policy.lkg_grace_period = std::chrono::seconds(60);
+  manager.StartRotation(gatekeeper, "alice", policy);
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+  while (issue_calls.load() == 0 && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  manager.StopRotation();
+
+  EXPECT_GT(issue_calls.load(), 0);
+  EXPECT_EQ(manager.get_quic_context().ctx, before_ctx);
+  EXPECT_EQ(manager.GetState(), IdentityState::Ready);
+
+  bool saw_notary_rotation_failure = false;
+  for (const auto& event : events) {
+    if (event.type == AnalyticsEventType::RotationFailure &&
+        event.detail == "notary_request_failed") {
+      saw_notary_rotation_failure = true;
+      break;
+    }
+  }
+  EXPECT_TRUE(saw_notary_rotation_failure);
+}
+
 TEST(TransportContextTest, RejectsMissingAlpn) {
   const auto pair = GenerateSelfSigned();
   IdentityManager manager(CredentialProvider{});

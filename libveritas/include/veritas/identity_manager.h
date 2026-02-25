@@ -136,6 +136,16 @@ struct RevocationPolicy {
   std::chrono::seconds lock_deadline{60};
 };
 
+struct CertificateLifecycleConfig {
+  NotaryClientConfig notary;
+  std::function<std::string()> csr_provider;
+  std::function<std::string()> private_key_provider;
+  std::function<std::optional<std::string>()> serial_provider;
+  std::function<void(const std::string&)> serial_observer;
+  std::uint32_t requested_ttl_seconds = 3600;
+  std::string alpn = "h3";
+};
+
 class RotationCredentialProvider {
  public:
   virtual ~RotationCredentialProvider() = default;
@@ -176,6 +186,27 @@ using LogHandler = std::function<void(LogLevel, const std::string&)>;
 using RotationCallback = std::function<void()>;
 using SecurityAlertCallback = std::function<void(AlertType)>;
 using AnalyticsCallback = std::function<void(const AnalyticsEvent&)>;
+using NotaryIssueRunner = std::function<CertificateMaterial(
+    const NotaryClientConfig&,
+    std::string_view,
+    const std::string&,
+    std::uint32_t,
+    const std::string&)>;
+using NotaryRenewRunner = std::function<CertificateMaterial(
+    const NotaryClientConfig&,
+    std::string_view,
+    const std::string&,
+    std::uint32_t,
+    const std::string&)>;
+using NotaryRevokeRunner = std::function<void(const NotaryClientConfig&,
+                                              std::string_view,
+                                              const std::string&,
+                                              const std::string&,
+                                              const std::string&)>;
+using NotaryStatusRunner = std::function<CertificateStatusResult(
+    const NotaryClientConfig&,
+    std::string_view,
+    const std::string&)>;
 
 class IdentityManager {
  public:
@@ -184,7 +215,11 @@ class IdentityManager {
       std::optional<storage::TokenStoreConfig> token_store_config =
           std::nullopt,
       EntropyChecker entropy_checker = auth::CheckEntropyReady,
-      AuthRunner auth_runner = {});
+      AuthRunner auth_runner = {},
+      NotaryIssueRunner notary_issue_runner = {},
+      NotaryRenewRunner notary_renew_runner = {},
+      NotaryRevokeRunner notary_revoke_runner = {},
+      NotaryStatusRunner notary_status_runner = {});
 
   ~IdentityManager();
 
@@ -219,6 +254,9 @@ class IdentityManager {
 
   void SetRotationCredentialProvider(
       std::shared_ptr<RotationCredentialProvider> provider);
+  void ConfigureCertificateLifecycle(CertificateLifecycleConfig config);
+  void DisableCertificateLifecycle();
+  bool IsCertificateLifecycleConfigured();
   void StartRotation(const GatekeeperClientConfig& config,
                      const std::string& username,
                      RotationPolicy policy = RotationPolicy{});
@@ -253,6 +291,27 @@ class IdentityManager {
   AuthResult RunAuthFlow(const GatekeeperClientConfig& config,
                          const std::string& username,
                          const std::string& password);
+  bool RotateCertificateLifecycle();
+  std::string NextRotationIdempotencyKey(std::string_view operation) const;
+  CertificateMaterial RunNotaryIssue(const NotaryClientConfig& config,
+                                     std::string_view refresh_token,
+                                     const std::string& csr_der,
+                                     std::uint32_t requested_ttl_seconds,
+                                     const std::string& idempotency_key) const;
+  CertificateMaterial RunNotaryRenew(const NotaryClientConfig& config,
+                                     std::string_view refresh_token,
+                                     const std::string& certificate_serial,
+                                     std::uint32_t requested_ttl_seconds,
+                                     const std::string& idempotency_key) const;
+  void RunNotaryRevoke(const NotaryClientConfig& config,
+                       std::string_view refresh_token,
+                       const std::string& certificate_serial,
+                       const std::string& reason,
+                       const std::string& actor) const;
+  CertificateStatusResult RunNotaryStatus(
+      const NotaryClientConfig& config,
+      std::string_view refresh_token,
+      const std::string& certificate_serial) const;
   void EmitAlert(AlertType alert);
   void EmitAnalytics(AnalyticsEventType type, int count, const std::string& detail);
 
@@ -263,6 +322,10 @@ class IdentityManager {
   CredentialProvider credential_provider_;
   EntropyChecker entropy_checker_;
   AuthRunner auth_runner_;
+  NotaryIssueRunner notary_issue_runner_;
+  NotaryRenewRunner notary_renew_runner_;
+  NotaryRevokeRunner notary_revoke_runner_;
+  NotaryStatusRunner notary_status_runner_;
   RotationCallback rotation_callback_;
   SecurityAlertCallback security_alert_callback_;
   AnalyticsCallback analytics_callback_;
@@ -275,6 +338,7 @@ class IdentityManager {
   IdentityErrorCode last_error_ = IdentityErrorCode::None;
   std::optional<AuthResult> persisted_identity_;
   std::atomic<int> consecutive_auth_failures_{0};
+  std::optional<std::string> active_certificate_serial_;
 
   std::mutex rotation_mutex_;
   std::jthread rotation_worker_;
@@ -283,6 +347,7 @@ class IdentityManager {
   std::string rotation_username_;
   RotationPolicy rotation_policy_{};
   std::shared_ptr<RotationCredentialProvider> rotation_provider_;
+  std::optional<CertificateLifecycleConfig> certificate_lifecycle_config_;
 
   std::jthread revocation_worker_;
   std::atomic<bool> revocation_running_{false};
