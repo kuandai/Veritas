@@ -44,6 +44,9 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "${tls_dir}"
+# Redis runs as a non-root user in the container; ensure mounted host paths
+# are traversable/readable from inside the container.
+chmod 755 "${tmp_dir}" "${tls_dir}"
 
 openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
   -subj "/CN=veritas-redis-test-ca" \
@@ -70,6 +73,10 @@ openssl x509 -req -sha256 \
   -days 1 \
   -extfile "${server_ext_path}" >/dev/null 2>&1
 
+# Allow the container user to read mounted TLS files.
+chmod 644 "${ca_path}" "${server_crt_path}" "${server_key_path}" \
+  "${server_ext_path}" "${tls_dir}/server.csr"
+
 cat > "${config_path}" <<EOF
 bind 0.0.0.0
 port 0
@@ -82,7 +89,10 @@ tls-auth-clients no
 requirepass ${redis_password}
 EOF
 
-docker run -d --rm \
+# Allow the container user to read mounted Redis config.
+chmod 644 "${config_path}"
+
+docker run -d \
   --name "${container_name}" \
   -p "${REDIS_TLS_PORT}:6380" \
   -v "${tls_dir}:/tls:ro" \
@@ -91,7 +101,12 @@ docker run -d --rm \
   redis-server /usr/local/etc/redis/redis.conf >/dev/null
 
 ready=0
+container_exited=0
 for _ in $(seq 1 40); do
+  if ! docker ps --format '{{.Names}}' | grep -Fxq "${container_name}"; then
+    container_exited=1
+    break
+  fi
   if docker exec "${container_name}" redis-cli \
       --tls \
       --cacert /tls/ca.crt \
@@ -105,8 +120,16 @@ done
 
 if [[ "${ready}" != "1" ]]; then
   echo "Redis TLS endpoint did not become ready" >&2
+  if [[ "${container_exited}" == "1" ]]; then
+    echo "Redis container exited before readiness checks completed" >&2
+  fi
+  docker inspect "${container_name}" >/dev/null 2>&1 && \
+    docker inspect -f 'state={{.State.Status}} exit={{.State.ExitCode}} error={{.State.Error}}' \
+      "${container_name}" || true
   docker logs "${container_name}" || true
-  cat "${ping_err_path}" || true
+  if [[ -f "${ping_err_path}" ]]; then
+    cat "${ping_err_path}" || true
+  fi
   exit 1
 fi
 
