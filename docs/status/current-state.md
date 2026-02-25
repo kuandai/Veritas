@@ -176,9 +176,12 @@ Implemented
     `NOTARY_GATEKEEPER_ALLOW_INSECURE=true`.
   - token state mapping:
     - `ACTIVE` -> authz success,
+    - `ACTIVE` without principal `user_uuid` -> `UNAUTHENTICATED`,
     - `REVOKED` -> `PERMISSION_DENIED`,
     - `UNKNOWN` / `UNSPECIFIED` -> `UNAUTHENTICATED`,
     - Gatekeeper transport unavailable -> `UNAVAILABLE` fail-closed.
+  - principal identity for authorization is sourced from
+    `GetTokenStatusResponse.user_uuid`.
 - Notary Sprint 1 trust model document exists:
   `docs/architecture/notary-threat-model.md`.
 - Notary PKI policy baseline exists:
@@ -193,6 +196,8 @@ Implemented
 - `IssueCertificate` implementation is wired:
   - deterministic request validation (token, CSR, idempotency, minimum TTL),
   - authz enforcement via Gatekeeper token status,
+  - leaf subject identity is derived from authoritative principal identity from
+    authz context (not CSR subject identity claims),
   - signer invocation and leaf + chain response mapping,
   - issuance + idempotency persistence into shared store,
   - idempotent replay for duplicate request key + same token hash.
@@ -271,6 +276,7 @@ Implemented
     - revoked tokens carry reason metadata + revocation timestamp.
     - tombstone retention prevents replay of revoked token hashes.
     - status API returns `ACTIVE` / `REVOKED` / `UNKNOWN`.
+    - status API returns `user_uuid` when token ownership is known.
   - Redis URI parser supports `redis://` and `rediss://` with fail-closed TLS
     validation (`verify_peer=true` requires `cacert`/`cacertdir`; client cert
     auth requires both `cert` and `key`).

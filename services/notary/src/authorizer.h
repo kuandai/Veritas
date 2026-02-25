@@ -23,7 +23,8 @@ class TokenStatusClient {
   virtual grpc::Status GetTokenStatus(
       const std::string& refresh_token,
       veritas::auth::v1::TokenStatusState* state,
-      std::string* reason) const = 0;
+      std::string* reason,
+      std::string* user_uuid) const = 0;
 };
 
 class GatekeeperTokenStatusClient final : public TokenStatusClient {
@@ -34,7 +35,8 @@ class GatekeeperTokenStatusClient final : public TokenStatusClient {
   grpc::Status GetTokenStatus(
       const std::string& refresh_token,
       veritas::auth::v1::TokenStatusState* state,
-      std::string* reason) const override;
+      std::string* reason,
+      std::string* user_uuid) const override;
 
  private:
   std::unique_ptr<veritas::auth::v1::Gatekeeper::Stub> stub_;
@@ -44,7 +46,8 @@ class RequestAuthorizer {
  public:
   virtual ~RequestAuthorizer() = default;
   virtual grpc::Status AuthorizeRefreshToken(
-      std::string_view refresh_token) const = 0;
+      std::string_view refresh_token,
+      std::string* user_uuid) const = 0;
 };
 
 class RefreshTokenAuthorizer final : public RequestAuthorizer {
@@ -52,7 +55,8 @@ class RefreshTokenAuthorizer final : public RequestAuthorizer {
   explicit RefreshTokenAuthorizer(std::shared_ptr<TokenStatusClient> client);
 
   grpc::Status AuthorizeRefreshToken(
-      std::string_view refresh_token) const override;
+      std::string_view refresh_token,
+      std::string* user_uuid) const override;
 
  private:
   std::shared_ptr<TokenStatusClient> client_;

@@ -138,7 +138,11 @@ void WriteFile(const std::filesystem::path& path, const std::string& data) {
 class AllowAuthorizer final : public RequestAuthorizer {
  public:
   grpc::Status AuthorizeRefreshToken(
-      std::string_view /*refresh_token*/) const override {
+      std::string_view /*refresh_token*/,
+      std::string* user_uuid) const override {
+    if (user_uuid) {
+      *user_uuid = "integration-user";
+    }
     return grpc::Status::OK;
   }
 };

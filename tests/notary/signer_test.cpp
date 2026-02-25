@@ -51,6 +51,41 @@ std::string BioToString(BIO* bio) {
   return std::string(mem->data, mem->length);
 }
 
+std::string ExtractCertificateCommonName(const std::string& certificate_pem) {
+  std::unique_ptr<BIO, BioDeleter> bio(
+      BIO_new_mem_buf(certificate_pem.data(),
+                      static_cast<int>(certificate_pem.size())));
+  if (!bio) {
+    throw std::runtime_error("Failed to allocate certificate BIO");
+  }
+
+  std::unique_ptr<X509, X509Deleter> cert(
+      PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr));
+  if (!cert) {
+    throw std::runtime_error("Failed to parse certificate PEM");
+  }
+
+  X509_NAME* subject = X509_get_subject_name(cert.get());
+  if (!subject) {
+    throw std::runtime_error("Certificate subject is missing");
+  }
+
+  const int cn_index = X509_NAME_get_index_by_NID(subject, NID_commonName, -1);
+  if (cn_index < 0) {
+    return {};
+  }
+  X509_NAME_ENTRY* entry = X509_NAME_get_entry(subject, cn_index);
+  ASN1_STRING* data = X509_NAME_ENTRY_get_data(entry);
+  unsigned char* utf8 = nullptr;
+  const int length = ASN1_STRING_to_UTF8(&utf8, data);
+  if (length < 0) {
+    throw std::runtime_error("Failed to decode certificate subject CN");
+  }
+  std::string cn(reinterpret_cast<char*>(utf8), static_cast<size_t>(length));
+  OPENSSL_free(utf8);
+  return cn;
+}
+
 std::unique_ptr<EVP_PKEY, PkeyDeleter> GenerateRsaKey(int bits) {
   std::unique_ptr<EVP_PKEY_CTX, PkeyCtxDeleter> ctx(
       EVP_PKEY_CTX_new_id(EVP_PKEY_RSA, nullptr));
@@ -308,6 +343,7 @@ TEST(SignerTest, OpenSslSignerIssuesCertificateAndReturnsChain) {
   request.csr_der = GenerateCsrDer(
       "svc.example.internal",
       {"svc.example.internal", "svc-alt.example.internal"});
+  request.subject_common_name = "principal-user";
   request.requested_ttl = std::chrono::minutes(30);
 
   const auto result = signer.Issue(request);
@@ -315,6 +351,8 @@ TEST(SignerTest, OpenSslSignerIssuesCertificateAndReturnsChain) {
   EXPECT_FALSE(result.certificate_pem.empty());
   EXPECT_FALSE(result.certificate_chain_pem.empty());
   EXPECT_LT(result.not_before, result.not_after);
+  EXPECT_EQ(ExtractCertificateCommonName(result.certificate_pem),
+            "principal-user");
 }
 
 TEST(SignerTest, OpenSslSignerRejectsMalformedCsr) {
@@ -325,6 +363,26 @@ TEST(SignerTest, OpenSslSignerRejectsMalformedCsr) {
 
   SigningRequest request;
   request.csr_der = "not-der";
+  request.subject_common_name = "principal-user";
+  request.requested_ttl = std::chrono::minutes(10);
+
+  try {
+    static_cast<void>(signer.Issue(request));
+    FAIL() << "expected SignerIssueError";
+  } catch (const SignerIssueError& ex) {
+    EXPECT_EQ(ex.code(), SignerIssueErrorCode::InvalidRequest);
+  }
+}
+
+TEST(SignerTest, OpenSslSignerRejectsMissingAuthoritativeSubject) {
+  TempDir temp;
+  const auto issuer_pair = GenerateSelfSignedIssuer();
+  const auto config = BuildSignerConfig(temp, issuer_pair);
+  OpenSslSigner signer(config);
+
+  SigningRequest request;
+  request.csr_der = GenerateCsrDer("svc.example.internal",
+                                   {"svc.example.internal"});
   request.requested_ttl = std::chrono::minutes(10);
 
   try {
@@ -343,6 +401,7 @@ TEST(SignerTest, OpenSslSignerRejectsMissingSan) {
 
   SigningRequest request;
   request.csr_der = GenerateCsrDer("svc.example.internal", {});
+  request.subject_common_name = "principal-user";
   request.requested_ttl = std::chrono::minutes(10);
 
   try {
@@ -362,6 +421,7 @@ TEST(SignerTest, OpenSslSignerRejectsUnsupportedSanType) {
   SigningRequest request;
   request.csr_der =
       GenerateCsrDer("svc.example.internal", {"svc.example.internal"}, 2048, true);
+  request.subject_common_name = "principal-user";
   request.requested_ttl = std::chrono::minutes(10);
 
   try {
@@ -381,6 +441,7 @@ TEST(SignerTest, OpenSslSignerRejectsWeakRsaKey) {
   SigningRequest request;
   request.csr_der = GenerateCsrDer("svc.example.internal",
                                    {"svc.example.internal"}, 1024, false);
+  request.subject_common_name = "principal-user";
   request.requested_ttl = std::chrono::minutes(10);
 
   try {
@@ -400,6 +461,7 @@ TEST(SignerTest, OpenSslSignerClampsTtlToPolicyMaximum) {
   SigningRequest request;
   request.csr_der = GenerateCsrDer("svc.example.internal",
                                    {"svc.example.internal"});
+  request.subject_common_name = "principal-user";
   request.requested_ttl = std::chrono::hours(48);
 
   const auto result = signer.Issue(request);
@@ -420,6 +482,7 @@ TEST(SignerTest, OpenSslSignerRenewsCertificateFromExistingLeaf) {
   SigningRequest issue_request;
   issue_request.csr_der = GenerateCsrDer("svc.example.internal",
                                          {"svc.example.internal"});
+  issue_request.subject_common_name = "principal-user";
   issue_request.requested_ttl = std::chrono::minutes(20);
   const auto issued = signer.Issue(issue_request);
 

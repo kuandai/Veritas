@@ -54,13 +54,21 @@ authenticated authorization context.
   - token state `ACTIVE` -> continue to issue/renew policy path,
   - token state `REVOKED` -> `PERMISSION_DENIED`,
   - token state `UNKNOWN` / `UNSPECIFIED` -> `UNAUTHENTICATED`,
+  - token state `ACTIVE` without principal `user_uuid` -> `UNAUTHENTICATED`,
   - Gatekeeper `UNAVAILABLE` -> `UNAVAILABLE` (fail closed),
   - other Gatekeeper RPC failures -> `UNAUTHENTICATED`.
+- Principal identity authority:
+  - Notary consumes `GetTokenStatusResponse.user_uuid` as authoritative
+    principal identity for each request.
+  - `IssueCertificate` uses that principal identity as leaf subject CN input to
+    the signer.
+  - CSR subject identity fields are treated as untrusted client input and are
+    not copied into issued certificate subject identity.
 - Shared issuance persistence integration:
   - `NOTARY_STORE_BACKEND=memory|redis` (default: memory),
   - `NOTARY_STORE_URI` is required for Redis backend,
-  - issuance records persist serial, cert payload, token hash linkage, and
-    idempotency key mapping.
+  - issuance records persist serial, cert payload, authoritative `user_uuid`,
+    token hash linkage, and idempotency key mapping.
 - Renewal policy baseline:
   - overlap window enforced before renewal (`15m` from expiry boundary),
   - active/non-revoked record required,

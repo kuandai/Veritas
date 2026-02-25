@@ -50,6 +50,7 @@ class SignerIssueError : public std::runtime_error {
 
 struct SigningRequest {
   std::string csr_der;
+  std::string subject_common_name;
   std::chrono::seconds requested_ttl{};
 };
 

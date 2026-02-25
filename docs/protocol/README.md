@@ -24,6 +24,8 @@ Gatekeeper payload semantics (current implementation):
   metadata.
 - `GetTokenStatusResponse.state` reports token lifecycle status:
   `ACTIVE`, `REVOKED`, or `UNKNOWN`.
+- `GetTokenStatusResponse.user_uuid` carries authoritative token principal
+  identity when known.
 
 Notary payload semantics (current implementation):
 - `IssueCertificateRequest` and `RenewCertificateRequest` carry

@@ -14,21 +14,28 @@ namespace {
 
 class FixedAuthorizer final : public RequestAuthorizer {
  public:
-  explicit FixedAuthorizer(grpc::Status status) : status_(std::move(status)) {}
+  explicit FixedAuthorizer(grpc::Status status, std::string user_uuid = "user-1")
+      : status_(std::move(status)), user_uuid_(std::move(user_uuid)) {}
 
   grpc::Status AuthorizeRefreshToken(
-      std::string_view /*refresh_token*/) const override {
+      std::string_view /*refresh_token*/,
+      std::string* user_uuid) const override {
+    if (status_.ok() && user_uuid) {
+      *user_uuid = user_uuid_;
+    }
     return status_;
   }
 
  private:
   grpc::Status status_;
+  std::string user_uuid_;
 };
 
 class FakeSigner final : public Signer {
  public:
-  SigningResult Issue(const SigningRequest& /*request*/) override {
+  SigningResult Issue(const SigningRequest& request) override {
     ++issue_calls_;
+    last_issue_request_ = request;
     return next_issue_result_;
   }
 
@@ -47,12 +54,16 @@ class FakeSigner final : public Signer {
 
   int issue_calls() const { return issue_calls_; }
   int renew_calls() const { return renew_calls_; }
+  const std::optional<SigningRequest>& last_issue_request() const {
+    return last_issue_request_;
+  }
 
  private:
   SigningResult next_issue_result_;
   SigningResult next_renew_result_;
   int issue_calls_ = 0;
   int renew_calls_ = 0;
+  std::optional<SigningRequest> last_issue_request_;
 };
 
 std::shared_ptr<veritas::shared::IssuanceStore> MakeInMemoryStore() {
@@ -264,6 +275,43 @@ TEST(NotaryServiceTest, IssueCertificatePersistsAndReturnsIssuedRecord) {
   ASSERT_TRUE(persisted.has_value());
   EXPECT_EQ(persisted->certificate_pem, "leaf-cert");
   EXPECT_EQ(persisted->certificate_chain_pem, "intermediate-chain");
+  EXPECT_EQ(persisted->user_uuid, "user-1");
+  ASSERT_TRUE(signer->last_issue_request().has_value());
+  EXPECT_EQ(signer->last_issue_request()->subject_common_name, "user-1");
+}
+
+TEST(NotaryServiceTest, IssueCertificateUsesAuthoritativePrincipalForSignerIdentity) {
+  auto authorizer =
+      std::make_shared<FixedAuthorizer>(grpc::Status::OK, "principal-alice");
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  NotaryServiceImpl service(authorizer, signer, store);
+
+  const auto now = std::chrono::system_clock::now();
+  SigningResult result;
+  result.certificate_serial = "SERIAL-A";
+  result.certificate_pem = "leaf-cert";
+  result.certificate_chain_pem = "chain-cert";
+  result.not_before = now;
+  result.not_after = now + std::chrono::minutes(10);
+  signer->SetNextIssueResult(result);
+
+  grpc::ServerContext context;
+  veritas::notary::v1::IssueCertificateRequest request;
+  veritas::notary::v1::IssueCertificateResponse response;
+  request.set_refresh_token("token");
+  request.set_csr_der("spoofed-csr");
+  request.set_requested_ttl_seconds(600);
+  request.set_idempotency_key("idem-principal");
+
+  ASSERT_TRUE(service.IssueCertificate(&context, &request, &response).ok());
+  ASSERT_TRUE(signer->last_issue_request().has_value());
+  EXPECT_EQ(signer->last_issue_request()->subject_common_name,
+            "principal-alice");
+
+  const auto persisted = store->GetBySerial("SERIAL-A");
+  ASSERT_TRUE(persisted.has_value());
+  EXPECT_EQ(persisted->user_uuid, "principal-alice");
 }
 
 TEST(NotaryServiceTest, IssueCertificateReplaysIdempotentRequest) {

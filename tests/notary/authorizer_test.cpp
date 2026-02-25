@@ -16,16 +16,25 @@ namespace {
 class FakeTokenStatusClient final : public TokenStatusClient {
  public:
   explicit FakeTokenStatusClient(grpc::Status status,
-                                 veritas::auth::v1::TokenStatusState state)
-      : status_(std::move(status)), state_(state) {}
+                                 veritas::auth::v1::TokenStatusState state,
+                                 bool include_user_uuid = true)
+      : status_(std::move(status)),
+        state_(state),
+        include_user_uuid_(include_user_uuid) {}
 
   grpc::Status GetTokenStatus(const std::string& /*refresh_token*/,
                               veritas::auth::v1::TokenStatusState* state,
-                              std::string* reason) const override {
+                              std::string* reason,
+                              std::string* user_uuid) const override {
     if (status_.ok()) {
       *state = state_;
       if (reason) {
         *reason = "fake";
+      }
+      if (include_user_uuid_ &&
+          state_ == veritas::auth::v1::TOKEN_STATUS_STATE_ACTIVE &&
+          user_uuid) {
+        *user_uuid = "user-1";
       }
     }
     return status_;
@@ -34,13 +43,15 @@ class FakeTokenStatusClient final : public TokenStatusClient {
  private:
   grpc::Status status_;
   veritas::auth::v1::TokenStatusState state_;
+  bool include_user_uuid_;
 };
 
 TEST(AuthorizerTest, RejectsEmptyRefreshToken) {
   auto client = std::make_shared<FakeTokenStatusClient>(
       grpc::Status::OK, veritas::auth::v1::TOKEN_STATUS_STATE_ACTIVE);
   RefreshTokenAuthorizer authorizer(client);
-  const auto status = authorizer.AuthorizeRefreshToken("");
+  std::string user_uuid;
+  const auto status = authorizer.AuthorizeRefreshToken("", &user_uuid);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::INVALID_ARGUMENT);
 }
 
@@ -48,15 +59,27 @@ TEST(AuthorizerTest, AcceptsActiveToken) {
   auto client = std::make_shared<FakeTokenStatusClient>(
       grpc::Status::OK, veritas::auth::v1::TOKEN_STATUS_STATE_ACTIVE);
   RefreshTokenAuthorizer authorizer(client);
-  const auto status = authorizer.AuthorizeRefreshToken("token");
+  std::string user_uuid;
+  const auto status = authorizer.AuthorizeRefreshToken("token", &user_uuid);
   EXPECT_TRUE(status.ok());
+  EXPECT_EQ(user_uuid, "user-1");
+}
+
+TEST(AuthorizerTest, RejectsActiveTokenWithoutPrincipalIdentity) {
+  auto client = std::make_shared<FakeTokenStatusClient>(
+      grpc::Status::OK, veritas::auth::v1::TOKEN_STATUS_STATE_ACTIVE, false);
+  RefreshTokenAuthorizer authorizer(client);
+  std::string user_uuid;
+  const auto status = authorizer.AuthorizeRefreshToken("token", &user_uuid);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::UNAUTHENTICATED);
 }
 
 TEST(AuthorizerTest, RejectsRevokedToken) {
   auto client = std::make_shared<FakeTokenStatusClient>(
       grpc::Status::OK, veritas::auth::v1::TOKEN_STATUS_STATE_REVOKED);
   RefreshTokenAuthorizer authorizer(client);
-  const auto status = authorizer.AuthorizeRefreshToken("token");
+  std::string user_uuid;
+  const auto status = authorizer.AuthorizeRefreshToken("token", &user_uuid);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::PERMISSION_DENIED);
 }
 
@@ -64,7 +87,8 @@ TEST(AuthorizerTest, RejectsUnknownTokenAsUnauthenticated) {
   auto client = std::make_shared<FakeTokenStatusClient>(
       grpc::Status::OK, veritas::auth::v1::TOKEN_STATUS_STATE_UNKNOWN);
   RefreshTokenAuthorizer authorizer(client);
-  const auto status = authorizer.AuthorizeRefreshToken("token");
+  std::string user_uuid;
+  const auto status = authorizer.AuthorizeRefreshToken("token", &user_uuid);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::UNAUTHENTICATED);
 }
 
@@ -73,7 +97,8 @@ TEST(AuthorizerTest, MapsGatekeeperUnavailableToUnavailable) {
       grpc::Status(grpc::StatusCode::UNAVAILABLE, "down"),
       veritas::auth::v1::TOKEN_STATUS_STATE_UNSPECIFIED);
   RefreshTokenAuthorizer authorizer(client);
-  const auto status = authorizer.AuthorizeRefreshToken("token");
+  std::string user_uuid;
+  const auto status = authorizer.AuthorizeRefreshToken("token", &user_uuid);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::UNAVAILABLE);
 }
 
@@ -93,6 +118,7 @@ class FakeGatekeeperService final : public veritas::auth::v1::Gatekeeper::Servic
       return grpc::Status::OK;
     }
     response->set_state(it->second);
+    response->set_user_uuid("integration-user");
     return grpc::Status::OK;
   }
 
@@ -121,12 +147,16 @@ TEST(AuthorizerIntegrationTest, UsesGatekeeperGrpcStatusPath) {
   auto client = std::make_shared<GatekeeperTokenStatusClient>(config);
   RefreshTokenAuthorizer authorizer(client);
 
-  EXPECT_TRUE(authorizer.AuthorizeRefreshToken("active-token").ok());
+  std::string active_user_uuid;
+  EXPECT_TRUE(authorizer
+                  .AuthorizeRefreshToken("active-token", &active_user_uuid)
+                  .ok());
+  EXPECT_EQ(active_user_uuid, "integration-user");
   EXPECT_EQ(
-      authorizer.AuthorizeRefreshToken("revoked-token").error_code(),
+      authorizer.AuthorizeRefreshToken("revoked-token", nullptr).error_code(),
       grpc::StatusCode::PERMISSION_DENIED);
   EXPECT_EQ(
-      authorizer.AuthorizeRefreshToken("missing-token").error_code(),
+      authorizer.AuthorizeRefreshToken("missing-token", nullptr).error_code(),
       grpc::StatusCode::UNAUTHENTICATED);
 
   server->Shutdown();

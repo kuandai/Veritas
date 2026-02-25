@@ -5,7 +5,6 @@
 #include <chrono>
 #include <fstream>
 #include <memory>
-#include <optional>
 #include <sstream>
 #include <vector>
 
@@ -33,6 +32,10 @@ struct X509Deleter {
 
 struct X509ReqDeleter {
   void operator()(X509_REQ* req) const { X509_REQ_free(req); }
+};
+
+struct X509NameDeleter {
+  void operator()(X509_NAME* name) const { X509_NAME_free(name); }
 };
 
 struct BnDeleter {
@@ -152,23 +155,30 @@ std::unique_ptr<X509_REQ, X509ReqDeleter> ParseCsrDer(
   return req;
 }
 
-std::optional<std::string> ExtractCommonName(X509_NAME* subject_name) {
-  const int cn_index = X509_NAME_get_index_by_NID(subject_name, NID_commonName, -1);
-  if (cn_index < 0) {
-    return std::nullopt;
-  }
-  X509_NAME_ENTRY* entry = X509_NAME_get_entry(subject_name, cn_index);
-  ASN1_STRING* data = X509_NAME_ENTRY_get_data(entry);
-  unsigned char* utf8 = nullptr;
-  const int length = ASN1_STRING_to_UTF8(&utf8, data);
-  if (length < 0) {
+std::unique_ptr<X509_NAME, X509NameDeleter> BuildSubjectName(
+    const std::string& common_name) {
+  if (common_name.empty()) {
     throw SignerIssueError(SignerIssueErrorCode::InvalidRequest,
-                           "invalid subject common name");
+                           "subject_common_name is required");
   }
-  std::string common_name(reinterpret_cast<char*>(utf8),
-                          static_cast<size_t>(length));
-  OPENSSL_free(utf8);
-  return common_name;
+  if (common_name.size() > 255) {
+    throw SignerIssueError(SignerIssueErrorCode::InvalidRequest,
+                           "subject_common_name exceeds size limit");
+  }
+
+  std::unique_ptr<X509_NAME, X509NameDeleter> name(X509_NAME_new());
+  if (!name) {
+    throw SignerIssueError(SignerIssueErrorCode::Internal,
+                           "failed to allocate certificate subject");
+  }
+  if (X509_NAME_add_entry_by_txt(
+          name.get(), "CN", MBSTRING_ASC,
+          reinterpret_cast<const unsigned char*>(common_name.data()),
+          static_cast<int>(common_name.size()), -1, 0) != 1) {
+    throw SignerIssueError(SignerIssueErrorCode::Internal,
+                           "failed to set certificate subject common name");
+  }
+  return name;
 }
 
 void ValidateSubjectAltNamePolicy(X509_REQ* csr) {
@@ -222,13 +232,6 @@ void ValidateSubjectAltNamePolicy(X509_REQ* csr) {
                            "CSR SAN extension is required");
   }
 
-  const auto common_name = ExtractCommonName(X509_REQ_get_subject_name(csr));
-  if (common_name.has_value() && !dns_names.empty() &&
-      std::find(dns_names.begin(), dns_names.end(), *common_name) ==
-          dns_names.end()) {
-    throw SignerIssueError(SignerIssueErrorCode::PolicyDenied,
-                           "subject CN must match one of DNS SAN entries");
-  }
 }
 
 void ValidateSubjectAltNamePolicy(X509* certificate) {
@@ -262,14 +265,6 @@ void ValidateSubjectAltNamePolicy(X509* certificate) {
     }
   }
 
-  const auto common_name =
-      ExtractCommonName(X509_get_subject_name(certificate));
-  if (common_name.has_value() && !dns_names.empty() &&
-      std::find(dns_names.begin(), dns_names.end(), *common_name) ==
-          dns_names.end()) {
-    throw SignerIssueError(SignerIssueErrorCode::PolicyDenied,
-                           "subject CN must match one of DNS SAN entries");
-  }
 }
 
 void ValidateKeyPolicy(EVP_PKEY* pubkey, const char* error_context) {
@@ -496,12 +491,17 @@ SigningResult OpenSslSigner::Issue(const SigningRequest& request) {
     throw SignerIssueError(SignerIssueErrorCode::InvalidRequest,
                            "csr_der is required");
   }
+  if (request.subject_common_name.empty()) {
+    throw SignerIssueError(SignerIssueErrorCode::InvalidRequest,
+                           "subject_common_name is required");
+  }
 
   const auto ttl = ClampRequestedTtl(request.requested_ttl);
 
   auto issuer_cert = LoadIssuerCertificate(config_.issuer_cert_path);
   auto issuer_key = LoadIssuerPrivateKey(config_.issuer_key_path);
   auto csr = ParseCsrDer(request.csr_der);
+  auto subject_name = BuildSubjectName(request.subject_common_name);
 
   ValidateSubjectAltNamePolicy(csr.get());
   ValidateKeyPolicy(csr.get());
@@ -519,7 +519,7 @@ SigningResult OpenSslSigner::Issue(const SigningRequest& request) {
   const std::string serial = GenerateAndSetSerial(leaf.get());
   if (X509_set_issuer_name(leaf.get(), X509_get_subject_name(issuer_cert.get())) !=
           1 ||
-      X509_set_subject_name(leaf.get(), X509_REQ_get_subject_name(csr.get())) != 1) {
+      X509_set_subject_name(leaf.get(), subject_name.get()) != 1) {
     throw SignerIssueError(SignerIssueErrorCode::Internal,
                            "failed to set certificate names");
   }

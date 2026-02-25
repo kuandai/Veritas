@@ -42,7 +42,8 @@ GatekeeperTokenStatusClient::GatekeeperTokenStatusClient(
 grpc::Status GatekeeperTokenStatusClient::GetTokenStatus(
     const std::string& refresh_token,
     veritas::auth::v1::TokenStatusState* state,
-    std::string* reason) const {
+    std::string* reason,
+    std::string* user_uuid) const {
   if (!state) {
     return grpc::Status(grpc::StatusCode::INTERNAL,
                         "state output parameter is required");
@@ -62,6 +63,9 @@ grpc::Status GatekeeperTokenStatusClient::GetTokenStatus(
   if (reason) {
     *reason = response.reason();
   }
+  if (user_uuid) {
+    *user_uuid = response.user_uuid();
+  }
   return grpc::Status::OK;
 }
 
@@ -74,7 +78,8 @@ RefreshTokenAuthorizer::RefreshTokenAuthorizer(
 }
 
 grpc::Status RefreshTokenAuthorizer::AuthorizeRefreshToken(
-    std::string_view refresh_token) const {
+    std::string_view refresh_token,
+    std::string* user_uuid) const {
   if (refresh_token.empty()) {
     return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                         "refresh_token is required");
@@ -83,8 +88,9 @@ grpc::Status RefreshTokenAuthorizer::AuthorizeRefreshToken(
   veritas::auth::v1::TokenStatusState state =
       veritas::auth::v1::TOKEN_STATUS_STATE_UNSPECIFIED;
   std::string reason;
+  std::string principal_user_uuid;
   const auto status = client_->GetTokenStatus(std::string(refresh_token), &state,
-                                              &reason);
+                                              &reason, &principal_user_uuid);
   if (!status.ok()) {
     if (status.error_code() == grpc::StatusCode::UNAVAILABLE) {
       return grpc::Status(grpc::StatusCode::UNAVAILABLE,
@@ -96,6 +102,13 @@ grpc::Status RefreshTokenAuthorizer::AuthorizeRefreshToken(
 
   switch (state) {
     case veritas::auth::v1::TOKEN_STATUS_STATE_ACTIVE:
+      if (principal_user_uuid.empty()) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
+                            "refresh token is missing principal identity");
+      }
+      if (user_uuid) {
+        *user_uuid = std::move(principal_user_uuid);
+      }
       return grpc::Status::OK;
     case veritas::auth::v1::TOKEN_STATUS_STATE_REVOKED:
       return grpc::Status(grpc::StatusCode::PERMISSION_DENIED,

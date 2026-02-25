@@ -290,6 +290,7 @@ TEST(SaslServerTest, RevokeTokenUpdatesStatusToRevoked) {
   ASSERT_TRUE(server.GetTokenStatus(active_request, &active_response).ok());
   EXPECT_EQ(active_response.state(),
             veritas::auth::v1::TOKEN_STATUS_STATE_ACTIVE);
+  EXPECT_FALSE(active_response.user_uuid().empty());
 
   veritas::auth::v1::RevokeTokenRequest revoke_request;
   veritas::auth::v1::RevokeTokenResponse revoke_response;
@@ -303,6 +304,7 @@ TEST(SaslServerTest, RevokeTokenUpdatesStatusToRevoked) {
   EXPECT_EQ(revoked_response.state(),
             veritas::auth::v1::TOKEN_STATUS_STATE_REVOKED);
   EXPECT_EQ(revoked_response.reason(), "test-revoke");
+  EXPECT_EQ(revoked_response.user_uuid(), active_response.user_uuid());
 }
 
 }  // namespace veritas::gatekeeper

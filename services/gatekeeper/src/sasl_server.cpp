@@ -727,6 +727,9 @@ grpc::Status SaslServer::GetTokenStatus(
   try {
     const std::string token_hash = HashTokenSha256(request.refresh_token());
     const TokenStatus status = token_store_->GetTokenStatus(token_hash);
+    if (!status.user_uuid.empty()) {
+      response->set_user_uuid(status.user_uuid);
+    }
     switch (status.state) {
       case TokenState::Active:
         response->set_state(

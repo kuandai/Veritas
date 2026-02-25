@@ -517,12 +517,6 @@ grpc::Status ValidateStatusRequest(
   return grpc::Status::OK;
 }
 
-std::string DeriveSubjectMarker(const std::string& token_hash) {
-  constexpr size_t kPrefixLength = 16;
-  const auto length = std::min(kPrefixLength, token_hash.size());
-  return "token:" + token_hash.substr(0, length);
-}
-
 }  // namespace
 
 NotaryServiceImpl::NotaryServiceImpl(
@@ -575,7 +569,10 @@ grpc::Status NotaryServiceImpl::IssueCertificate(
     return validation_status;
   }
 
-  const auto authz = authorizer_->AuthorizeRefreshToken(request->refresh_token());
+  std::string principal_user_uuid;
+  const auto authz =
+      authorizer_->AuthorizeRefreshToken(request->refresh_token(),
+                                         &principal_user_uuid);
   if (!authz.ok()) {
     security_metrics_->Increment("authz_failure");
     const auto mapped = MapAuthzStatusToIssueStatus(authz, response);
@@ -613,6 +610,14 @@ grpc::Status NotaryServiceImpl::IssueCertificate(
         LogNotaryEvent("IssueCertificate", status, "idempotency_conflict");
         return status;
       }
+      if (existing_record->user_uuid != principal_user_uuid) {
+        security_metrics_->Increment("policy_denied");
+        const auto status = StatusWithNotaryError(
+            response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
+            "idempotency key is already bound to another principal");
+        LogNotaryEvent("IssueCertificate", status, "idempotency_principal_mismatch");
+        return status;
+      }
       FillIssuedResponseFromRecord(*existing_record, response);
       LogNotaryEvent("IssueCertificate", grpc::Status::OK, "idempotent_replay");
       return grpc::Status::OK;
@@ -628,6 +633,7 @@ grpc::Status NotaryServiceImpl::IssueCertificate(
     SigningRequest signing_request;
     signing_request.csr_der = request->csr_der();
     signing_request.requested_ttl = requested_ttl;
+    signing_request.subject_common_name = principal_user_uuid;
     signing_result = signer_->Issue(signing_request);
   } catch (const SignerIssueError& ex) {
     grpc::Status status;
@@ -661,7 +667,7 @@ grpc::Status NotaryServiceImpl::IssueCertificate(
   record.certificate_serial = signing_result.certificate_serial;
   record.certificate_pem = signing_result.certificate_pem;
   record.certificate_chain_pem = signing_result.certificate_chain_pem;
-  record.user_uuid = DeriveSubjectMarker(token_hash);
+  record.user_uuid = principal_user_uuid;
   record.token_hash = token_hash;
   record.idempotency_key = request->idempotency_key();
   record.issued_at = signing_result.not_before;
@@ -722,7 +728,10 @@ grpc::Status NotaryServiceImpl::RenewCertificate(
     return validation_status;
   }
 
-  const auto authz = authorizer_->AuthorizeRefreshToken(request->refresh_token());
+  std::string principal_user_uuid;
+  const auto authz =
+      authorizer_->AuthorizeRefreshToken(request->refresh_token(),
+                                         &principal_user_uuid);
   if (!authz.ok()) {
     security_metrics_->Increment("authz_failure");
     const auto mapped = MapAuthzStatusToRenewStatus(authz, response);
@@ -760,6 +769,14 @@ grpc::Status NotaryServiceImpl::RenewCertificate(
         LogNotaryEvent("RenewCertificate", status, "idempotency_conflict");
         return status;
       }
+      if (existing_record->user_uuid != principal_user_uuid) {
+        security_metrics_->Increment("policy_denied");
+        const auto status = StatusWithNotaryError(
+            response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
+            "idempotency key is already bound to another principal");
+        LogNotaryEvent("RenewCertificate", status, "idempotency_principal_mismatch");
+        return status;
+      }
       FillRenewedResponseFromRecord(*existing_record, response);
       LogNotaryEvent("RenewCertificate", grpc::Status::OK, "idempotent_replay");
       return grpc::Status::OK;
@@ -792,6 +809,14 @@ grpc::Status NotaryServiceImpl::RenewCertificate(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
         "certificate does not belong to this token");
     LogNotaryEvent("RenewCertificate", status, "token_mismatch");
+    return status;
+  }
+  if (current_record->user_uuid != principal_user_uuid) {
+    security_metrics_->Increment("policy_denied");
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
+        "certificate does not belong to this principal");
+    LogNotaryEvent("RenewCertificate", status, "principal_mismatch");
     return status;
   }
   if (current_record->state == veritas::shared::IssuanceState::Revoked) {
@@ -918,7 +943,10 @@ grpc::Status NotaryServiceImpl::RevokeCertificate(
     return validation_status;
   }
 
-  const auto authz = authorizer_->AuthorizeRefreshToken(request->refresh_token());
+  std::string principal_user_uuid;
+  const auto authz =
+      authorizer_->AuthorizeRefreshToken(request->refresh_token(),
+                                         &principal_user_uuid);
   if (!authz.ok()) {
     security_metrics_->Increment("authz_failure");
     const auto mapped = MapAuthzStatusToRevokeStatus(authz, response);
@@ -958,6 +986,14 @@ grpc::Status NotaryServiceImpl::RevokeCertificate(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
         "certificate does not belong to this token");
     LogNotaryEvent("RevokeCertificate", status, "token_mismatch");
+    return status;
+  }
+  if (current_record->user_uuid != principal_user_uuid) {
+    security_metrics_->Increment("policy_denied");
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
+        "certificate does not belong to this principal");
+    LogNotaryEvent("RevokeCertificate", status, "principal_mismatch");
     return status;
   }
   if (current_record->state == veritas::shared::IssuanceState::Revoked) {
@@ -1007,7 +1043,10 @@ grpc::Status NotaryServiceImpl::GetCertificateStatus(
     return validation_status;
   }
 
-  const auto authz = authorizer_->AuthorizeRefreshToken(request->refresh_token());
+  std::string principal_user_uuid;
+  const auto authz =
+      authorizer_->AuthorizeRefreshToken(request->refresh_token(),
+                                         &principal_user_uuid);
   if (!authz.ok()) {
     security_metrics_->Increment("authz_failure");
     const auto mapped = MapAuthzStatusToStatusReadError(authz, response);
@@ -1047,6 +1086,14 @@ grpc::Status NotaryServiceImpl::GetCertificateStatus(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
         "certificate does not belong to this token");
     LogNotaryEvent("GetCertificateStatus", status, "token_mismatch");
+    return status;
+  }
+  if (record->user_uuid != principal_user_uuid) {
+    security_metrics_->Increment("policy_denied");
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_POLICY_DENIED,
+        "certificate does not belong to this principal");
+    LogNotaryEvent("GetCertificateStatus", status, "principal_mismatch");
     return status;
   }
 
