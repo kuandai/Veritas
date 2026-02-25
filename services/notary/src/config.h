@@ -36,6 +36,11 @@ struct NotaryConfig {
   size_t rate_limit_peer_max_requests = 120;
   size_t rate_limit_peer_max_keys = 10000;
   size_t rate_limit_peer_window_seconds = 60;
+
+  size_t revoked_token_abuse_threshold = 5;
+  size_t revoked_token_abuse_window_seconds = 300;
+  bool revoked_token_enforcement_enabled = false;
+  size_t revoked_token_enforcement_duration_seconds = 300;
 };
 
 NotaryConfig LoadConfig();

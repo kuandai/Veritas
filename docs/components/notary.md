@@ -94,8 +94,13 @@ authenticated authorization context.
     peer limits (secondary),
   - request-size bounds enforced on token/csr/serial/idempotency/reason/actor
     fields,
+  - revoked-token abuse tracker records repeated revoked-token attempts per
+    token hash within a bounded window,
+  - monitor-only mode is default (detection + counters, no containment),
+  - optional global containment mode can be enabled explicitly,
   - security counters track key events (`rate_limited`, `authz_failure`,
-    `validation_failure`, `policy_denied`) for future lockout policy work.
+    `validation_failure`, `policy_denied`, `revoked_token_attempt`,
+    `revoked_token_abuse_detected`) for analytics/lockout policy work.
   - runtime limiter policy env vars:
     - `NOTARY_RATE_LIMIT_IDENTITY_MAX_REQUESTS`
     - `NOTARY_RATE_LIMIT_IDENTITY_WINDOW_SECONDS`
@@ -103,6 +108,11 @@ authenticated authorization context.
     - `NOTARY_RATE_LIMIT_PEER_MAX_REQUESTS`
     - `NOTARY_RATE_LIMIT_PEER_WINDOW_SECONDS`
     - `NOTARY_RATE_LIMIT_PEER_MAX_KEYS`
+  - runtime revoked-token abuse policy env vars:
+    - `NOTARY_REVOKED_TOKEN_ABUSE_THRESHOLD`
+    - `NOTARY_REVOKED_TOKEN_ABUSE_WINDOW_SECONDS`
+    - `NOTARY_REVOKED_TOKEN_ENFORCEMENT_ENABLED` (default `false`)
+    - `NOTARY_REVOKED_TOKEN_ENFORCEMENT_DURATION_SECONDS`
 - Operational/demo entrypoints:
   - lifecycle smoke command: `scripts/smoke_notary_lifecycle.sh`,
   - runbook: `docs/operations/notary-runbook.md`,
@@ -115,5 +125,5 @@ authenticated authorization context.
 
 ## Aspirational
 
-- Runtime-tunable abuse controls and exportable security metrics.
+- Exportable security metrics and external policy control plane integration.
 - Dedicated external notary RPC demo client for deployment smoke checks.

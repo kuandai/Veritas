@@ -231,9 +231,13 @@ Implemented
     paths (primary),
   - fixed-window per-peer rate limiting on issue/renew/revoke/status paths
     (secondary),
+  - revoked-token abuse tracker (windowed per-token-hash detection),
+  - monitor-only default for revoked-token abuse detection,
+  - optional explicit containment mode for revoked-token abuse escalation,
   - request-size limits for token/csr/serial/idempotency/reason/actor fields,
   - in-memory security counters (`rate_limited`, `authz_failure`,
-    `validation_failure`, `policy_denied`) for future analytics/lockout policy.
+    `validation_failure`, `policy_denied`, `revoked_token_attempt`,
+    `revoked_token_abuse_detected`) for analytics/lockout policy.
   - runtime policy env vars:
     - `NOTARY_RATE_LIMIT_IDENTITY_MAX_REQUESTS`
     - `NOTARY_RATE_LIMIT_IDENTITY_WINDOW_SECONDS`
@@ -241,6 +245,10 @@ Implemented
     - `NOTARY_RATE_LIMIT_PEER_MAX_REQUESTS`
     - `NOTARY_RATE_LIMIT_PEER_WINDOW_SECONDS`
     - `NOTARY_RATE_LIMIT_PEER_MAX_KEYS`
+    - `NOTARY_REVOKED_TOKEN_ABUSE_THRESHOLD`
+    - `NOTARY_REVOKED_TOKEN_ABUSE_WINDOW_SECONDS`
+    - `NOTARY_REVOKED_TOKEN_ENFORCEMENT_ENABLED`
+    - `NOTARY_REVOKED_TOKEN_ENFORCEMENT_DURATION_SECONDS`
 - Structured JSON event logging is available for startup and RPC-path events.
 - Unit/integration tests cover:
   - config validation and read-file behavior,
@@ -258,7 +266,7 @@ Placeholders / incomplete
 - Security metrics are currently in-memory only (no export sink).
 
 Aspirational
-- Runtime-tunable abuse-control policy and exportable security metrics.
+- Exportable security metrics and external policy control plane integration.
 
 ### services/gatekeeper (SASL service)
 

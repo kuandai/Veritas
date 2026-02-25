@@ -517,6 +517,68 @@ grpc::Status ValidateStatusRequest(
   return grpc::Status::OK;
 }
 
+template <typename ResponseT>
+grpc::Status EnforceRevokedTokenContainment(
+    const char* action, ResponseT* response,
+    const std::shared_ptr<RevokedTokenAbuseTracker>& tracker,
+    const std::shared_ptr<SecurityMetrics>& metrics) {
+  if (!tracker || !tracker->IsContainmentActive()) {
+    return grpc::Status::OK;
+  }
+  if (metrics) {
+    metrics->Increment("revoked_token_enforcement_blocked");
+  }
+  const auto status = StatusWithNotaryError(
+      response, veritas::notary::v1::NOTARY_ERROR_CODE_TEMPORARILY_UNAVAILABLE,
+      "revoked-token abuse containment active");
+  LogNotaryEvent(action, status, "revoked_token_enforcement_active");
+  return status;
+}
+
+void RecordRevokedTokenAbuseAttempt(
+    const char* action, std::string_view refresh_token,
+    const std::shared_ptr<RevokedTokenAbuseTracker>& tracker,
+    const std::shared_ptr<SecurityMetrics>& metrics) {
+  if (!tracker || refresh_token.empty()) {
+    return;
+  }
+
+  std::string token_hash;
+  try {
+    token_hash = HashTokenSha256(std::string(refresh_token));
+  } catch (const std::exception&) {
+    if (metrics) {
+      metrics->Increment("revoked_token_abuse_record_error");
+    }
+    return;
+  }
+
+  const auto result = tracker->RecordAttempt(token_hash);
+  if (metrics) {
+    metrics->Increment("revoked_token_attempt");
+  }
+  if (!result.threshold_crossed) {
+    return;
+  }
+  if (metrics) {
+    metrics->Increment("revoked_token_abuse_detected");
+    if (result.enforcement_activated) {
+      metrics->Increment("revoked_token_enforcement_activated");
+    }
+  }
+  if (result.enforcement_activated) {
+    LogNotaryEvent(action,
+                   grpc::Status(grpc::StatusCode::RESOURCE_EXHAUSTED,
+                                "revoked-token abuse containment activated"),
+                   "revoked_token_enforcement_activated");
+    return;
+  }
+  LogNotaryEvent(action,
+                 grpc::Status(grpc::StatusCode::PERMISSION_DENIED,
+                              "revoked-token abuse threshold crossed"),
+                 "revoked_token_abuse_threshold_crossed");
+}
+
 }  // namespace
 
 NotaryServiceImpl::NotaryServiceImpl(
@@ -524,13 +586,15 @@ NotaryServiceImpl::NotaryServiceImpl(
     std::shared_ptr<veritas::shared::IssuanceStore> issuance_store,
     std::shared_ptr<RateLimiter> peer_rate_limiter,
     std::shared_ptr<RateLimiter> identity_rate_limiter,
-    std::shared_ptr<SecurityMetrics> security_metrics)
+    std::shared_ptr<SecurityMetrics> security_metrics,
+    std::shared_ptr<RevokedTokenAbuseTracker> revoked_token_abuse_tracker)
     : authorizer_(std::move(authorizer)),
       signer_(std::move(signer)),
       issuance_store_(std::move(issuance_store)),
       peer_rate_limiter_(std::move(peer_rate_limiter)),
       identity_rate_limiter_(std::move(identity_rate_limiter)),
-      security_metrics_(std::move(security_metrics)) {
+      security_metrics_(std::move(security_metrics)),
+      revoked_token_abuse_tracker_(std::move(revoked_token_abuse_tracker)) {
   if (!authorizer_) {
     throw std::runtime_error("notary authorizer is required");
   }
@@ -554,12 +618,23 @@ NotaryServiceImpl::NotaryServiceImpl(
   if (!security_metrics_) {
     security_metrics_ = std::make_shared<InMemorySecurityMetrics>();
   }
+  if (!revoked_token_abuse_tracker_) {
+    revoked_token_abuse_tracker_ =
+        std::make_shared<RevokedTokenAbuseTracker>();
+  }
 }
 
 grpc::Status NotaryServiceImpl::IssueCertificate(
     grpc::ServerContext* context,
     const veritas::notary::v1::IssueCertificateRequest* request,
     veritas::notary::v1::IssueCertificateResponse* response) {
+  if (const auto containment = EnforceRevokedTokenContainment(
+          "IssueCertificate", response, revoked_token_abuse_tracker_,
+          security_metrics_);
+      !containment.ok()) {
+    return containment;
+  }
+
   const auto peer_rate_key =
       std::string("issue:peer:") + ExtractPeerIdentity(context);
   if (!peer_rate_limiter_->Allow(peer_rate_key)) {
@@ -585,6 +660,11 @@ grpc::Status NotaryServiceImpl::IssueCertificate(
       authorizer_->AuthorizeRefreshToken(request->refresh_token(),
                                          &principal_user_uuid);
   if (!authz.ok()) {
+    if (authz.error_code() == grpc::StatusCode::PERMISSION_DENIED) {
+      RecordRevokedTokenAbuseAttempt(
+          "IssueCertificate", request->refresh_token(),
+          revoked_token_abuse_tracker_, security_metrics_);
+    }
     security_metrics_->Increment("authz_failure");
     const auto mapped = MapAuthzStatusToIssueStatus(authz, response);
     LogNotaryEvent("IssueCertificate", mapped, "authorization_failed");
@@ -730,6 +810,13 @@ grpc::Status NotaryServiceImpl::RenewCertificate(
     grpc::ServerContext* context,
     const veritas::notary::v1::RenewCertificateRequest* request,
     veritas::notary::v1::RenewCertificateResponse* response) {
+  if (const auto containment = EnforceRevokedTokenContainment(
+          "RenewCertificate", response, revoked_token_abuse_tracker_,
+          security_metrics_);
+      !containment.ok()) {
+    return containment;
+  }
+
   const auto peer_rate_key =
       std::string("renew:peer:") + ExtractPeerIdentity(context);
   if (!peer_rate_limiter_->Allow(peer_rate_key)) {
@@ -755,6 +842,11 @@ grpc::Status NotaryServiceImpl::RenewCertificate(
       authorizer_->AuthorizeRefreshToken(request->refresh_token(),
                                          &principal_user_uuid);
   if (!authz.ok()) {
+    if (authz.error_code() == grpc::StatusCode::PERMISSION_DENIED) {
+      RecordRevokedTokenAbuseAttempt(
+          "RenewCertificate", request->refresh_token(),
+          revoked_token_abuse_tracker_, security_metrics_);
+    }
     security_metrics_->Increment("authz_failure");
     const auto mapped = MapAuthzStatusToRenewStatus(authz, response);
     LogNotaryEvent("RenewCertificate", mapped, "authorization_failed");
@@ -958,6 +1050,13 @@ grpc::Status NotaryServiceImpl::RevokeCertificate(
     grpc::ServerContext* context,
     const veritas::notary::v1::RevokeCertificateRequest* request,
     veritas::notary::v1::RevokeCertificateResponse* response) {
+  if (const auto containment = EnforceRevokedTokenContainment(
+          "RevokeCertificate", response, revoked_token_abuse_tracker_,
+          security_metrics_);
+      !containment.ok()) {
+    return containment;
+  }
+
   const auto peer_rate_key =
       std::string("revoke:peer:") + ExtractPeerIdentity(context);
   if (!peer_rate_limiter_->Allow(peer_rate_key)) {
@@ -981,6 +1080,11 @@ grpc::Status NotaryServiceImpl::RevokeCertificate(
       authorizer_->AuthorizeRefreshToken(request->refresh_token(),
                                          &principal_user_uuid);
   if (!authz.ok()) {
+    if (authz.error_code() == grpc::StatusCode::PERMISSION_DENIED) {
+      RecordRevokedTokenAbuseAttempt(
+          "RevokeCertificate", request->refresh_token(),
+          revoked_token_abuse_tracker_, security_metrics_);
+    }
     security_metrics_->Increment("authz_failure");
     const auto mapped = MapAuthzStatusToRevokeStatus(authz, response);
     LogNotaryEvent("RevokeCertificate", mapped, "authorization_failed");
@@ -1068,6 +1172,13 @@ grpc::Status NotaryServiceImpl::GetCertificateStatus(
     grpc::ServerContext* context,
     const veritas::notary::v1::GetCertificateStatusRequest* request,
     veritas::notary::v1::GetCertificateStatusResponse* response) {
+  if (const auto containment = EnforceRevokedTokenContainment(
+          "GetCertificateStatus", response, revoked_token_abuse_tracker_,
+          security_metrics_);
+      !containment.ok()) {
+    return containment;
+  }
+
   const auto peer_rate_key =
       std::string("status:peer:") + ExtractPeerIdentity(context);
   if (!peer_rate_limiter_->Allow(peer_rate_key)) {
@@ -1092,6 +1203,11 @@ grpc::Status NotaryServiceImpl::GetCertificateStatus(
       authorizer_->AuthorizeRefreshToken(request->refresh_token(),
                                          &principal_user_uuid);
   if (!authz.ok()) {
+    if (authz.error_code() == grpc::StatusCode::PERMISSION_DENIED) {
+      RecordRevokedTokenAbuseAttempt(
+          "GetCertificateStatus", request->refresh_token(),
+          revoked_token_abuse_tracker_, security_metrics_);
+    }
     security_metrics_->Increment("authz_failure");
     const auto mapped = MapAuthzStatusToStatusReadError(authz, response);
     LogNotaryEvent("GetCertificateStatus", mapped, "authorization_failed");

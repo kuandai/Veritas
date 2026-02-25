@@ -68,8 +68,21 @@ int main() {
         std::make_shared<veritas::notary::FixedWindowRateLimiter>(
             identity_limiter_config);
 
-    veritas::notary::NotaryServiceImpl service(authorizer, signer, issuance_store,
-                                               peer_limiter, identity_limiter);
+    veritas::notary::RevokedTokenAbusePolicy abuse_policy;
+    abuse_policy.threshold = config.revoked_token_abuse_threshold;
+    abuse_policy.window =
+        std::chrono::seconds(config.revoked_token_abuse_window_seconds);
+    abuse_policy.enforcement_enabled =
+        config.revoked_token_enforcement_enabled;
+    abuse_policy.enforcement_duration = std::chrono::seconds(
+        config.revoked_token_enforcement_duration_seconds);
+    auto revoked_token_tracker =
+        std::make_shared<veritas::notary::RevokedTokenAbuseTracker>(
+            abuse_policy);
+
+    veritas::notary::NotaryServiceImpl service(
+        authorizer, signer, issuance_store, peer_limiter, identity_limiter,
+        nullptr, revoked_token_tracker);
     auto runtime = veritas::notary::StartNotaryServer(config, &service);
     veritas::notary::LogNotaryEvent("Startup", grpc::Status::OK,
                                     runtime.bound_addr);

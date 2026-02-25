@@ -185,6 +185,32 @@ class TokenMappedAuthorizer final : public RequestAuthorizer {
   std::unordered_map<std::string, std::string> mapping_;
 };
 
+class RoutedAuthorizer final : public RequestAuthorizer {
+ public:
+  struct Entry {
+    grpc::Status status;
+    std::string user_uuid;
+  };
+
+  explicit RoutedAuthorizer(std::unordered_map<std::string, Entry> entries)
+      : entries_(std::move(entries)) {}
+
+  grpc::Status AuthorizeRefreshToken(std::string_view refresh_token,
+                                     std::string* user_uuid) const override {
+    const auto it = entries_.find(std::string(refresh_token));
+    if (it == entries_.end()) {
+      return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "unknown token");
+    }
+    if (it->second.status.ok() && user_uuid) {
+      *user_uuid = it->second.user_uuid;
+    }
+    return it->second.status;
+  }
+
+ private:
+  std::unordered_map<std::string, Entry> entries_;
+};
+
 void SeedIssuedCertificate(NotaryServiceImpl* service, FakeSigner* signer,
                            const std::string& token,
                            const std::string& serial,
@@ -229,6 +255,128 @@ TEST(NotaryServiceTest, IssueCertificateDeniesUnauthorizedRequests) {
   EXPECT_EQ(response.error().code(),
             veritas::notary::v1::NOTARY_ERROR_CODE_TOKEN_REVOKED);
   EXPECT_FALSE(response.issued());
+}
+
+TEST(NotaryServiceTest, RevokedTokenAbuseDetectionDoesNotContainByDefault) {
+  auto authorizer = std::make_shared<RoutedAuthorizer>(
+      std::unordered_map<std::string, RoutedAuthorizer::Entry>{
+          {"revoked-token",
+           {grpc::Status(grpc::StatusCode::PERMISSION_DENIED, "revoked"),
+            ""}},
+          {"good-token", {grpc::Status::OK, "user-1"}}});
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  auto peer_limiter = std::make_shared<AllowRateLimiter>();
+  auto identity_limiter = std::make_shared<AllowRateLimiter>();
+  auto metrics = std::make_shared<InMemorySecurityMetrics>();
+
+  RevokedTokenAbusePolicy abuse_policy;
+  abuse_policy.threshold = 1;
+  abuse_policy.window = std::chrono::seconds(60);
+  abuse_policy.enforcement_enabled = false;
+  auto tracker =
+      std::make_shared<RevokedTokenAbuseTracker>(std::move(abuse_policy));
+
+  NotaryServiceImpl service(authorizer, signer, store, peer_limiter,
+                            identity_limiter, metrics, tracker);
+
+  grpc::ServerContext revoked_context;
+  veritas::notary::v1::IssueCertificateRequest revoked_request;
+  veritas::notary::v1::IssueCertificateResponse revoked_response;
+  revoked_request.set_refresh_token("revoked-token");
+  revoked_request.set_csr_der("csr");
+  revoked_request.set_requested_ttl_seconds(600);
+  revoked_request.set_idempotency_key("idem-revoked");
+  const auto revoked_status =
+      service.IssueCertificate(&revoked_context, &revoked_request,
+                               &revoked_response);
+  EXPECT_EQ(revoked_status.error_code(), grpc::StatusCode::PERMISSION_DENIED);
+  EXPECT_EQ(revoked_response.error().code(),
+            veritas::notary::v1::NOTARY_ERROR_CODE_TOKEN_REVOKED);
+
+  SigningResult result;
+  result.certificate_serial = "SERIAL-ABUSE-1";
+  result.certificate_pem = "leaf";
+  result.certificate_chain_pem = "chain";
+  result.not_before = std::chrono::system_clock::now();
+  result.not_after = result.not_before + std::chrono::minutes(10);
+  signer->SetNextIssueResult(result);
+
+  grpc::ServerContext good_context;
+  veritas::notary::v1::IssueCertificateRequest good_request;
+  veritas::notary::v1::IssueCertificateResponse good_response;
+  good_request.set_refresh_token("good-token");
+  good_request.set_csr_der("csr");
+  good_request.set_requested_ttl_seconds(600);
+  good_request.set_idempotency_key("idem-good");
+  ASSERT_TRUE(service.IssueCertificate(&good_context, &good_request,
+                                       &good_response)
+                  .ok());
+  EXPECT_TRUE(good_response.issued());
+  EXPECT_EQ(metrics->Get("revoked_token_attempt"), 1U);
+  EXPECT_EQ(metrics->Get("revoked_token_abuse_detected"), 1U);
+  EXPECT_EQ(metrics->Get("revoked_token_enforcement_activated"), 0U);
+  EXPECT_EQ(metrics->Get("revoked_token_enforcement_blocked"), 0U);
+}
+
+TEST(NotaryServiceTest, RevokedTokenAbuseEnforcementBlocksSubsequentRequests) {
+  auto authorizer = std::make_shared<RoutedAuthorizer>(
+      std::unordered_map<std::string, RoutedAuthorizer::Entry>{
+          {"revoked-token",
+           {grpc::Status(grpc::StatusCode::PERMISSION_DENIED, "revoked"),
+            ""}},
+          {"good-token", {grpc::Status::OK, "user-1"}}});
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  auto peer_limiter = std::make_shared<AllowRateLimiter>();
+  auto identity_limiter = std::make_shared<AllowRateLimiter>();
+  auto metrics = std::make_shared<InMemorySecurityMetrics>();
+
+  RevokedTokenAbusePolicy abuse_policy;
+  abuse_policy.threshold = 1;
+  abuse_policy.window = std::chrono::seconds(60);
+  abuse_policy.enforcement_enabled = true;
+  abuse_policy.enforcement_duration = std::chrono::seconds(60);
+  auto tracker =
+      std::make_shared<RevokedTokenAbuseTracker>(std::move(abuse_policy));
+
+  NotaryServiceImpl service(authorizer, signer, store, peer_limiter,
+                            identity_limiter, metrics, tracker);
+
+  grpc::ServerContext revoked_context;
+  veritas::notary::v1::IssueCertificateRequest revoked_request;
+  veritas::notary::v1::IssueCertificateResponse revoked_response;
+  revoked_request.set_refresh_token("revoked-token");
+  revoked_request.set_csr_der("csr");
+  revoked_request.set_requested_ttl_seconds(600);
+  revoked_request.set_idempotency_key("idem-revoked-enforced");
+  const auto revoked_status =
+      service.IssueCertificate(&revoked_context, &revoked_request,
+                               &revoked_response);
+  EXPECT_EQ(revoked_status.error_code(), grpc::StatusCode::PERMISSION_DENIED);
+
+  SigningResult result;
+  result.certificate_serial = "SERIAL-ABUSE-2";
+  result.certificate_pem = "leaf";
+  result.certificate_chain_pem = "chain";
+  result.not_before = std::chrono::system_clock::now();
+  result.not_after = result.not_before + std::chrono::minutes(10);
+  signer->SetNextIssueResult(result);
+
+  grpc::ServerContext good_context;
+  veritas::notary::v1::IssueCertificateRequest good_request;
+  veritas::notary::v1::IssueCertificateResponse good_response;
+  good_request.set_refresh_token("good-token");
+  good_request.set_csr_der("csr");
+  good_request.set_requested_ttl_seconds(600);
+  good_request.set_idempotency_key("idem-good-enforced");
+  const auto blocked_status =
+      service.IssueCertificate(&good_context, &good_request, &good_response);
+  EXPECT_EQ(blocked_status.error_code(), grpc::StatusCode::UNAVAILABLE);
+  EXPECT_EQ(good_response.error().code(),
+            veritas::notary::v1::NOTARY_ERROR_CODE_TEMPORARILY_UNAVAILABLE);
+  EXPECT_EQ(metrics->Get("revoked_token_enforcement_activated"), 1U);
+  EXPECT_EQ(metrics->Get("revoked_token_enforcement_blocked"), 1U);
 }
 
 TEST(NotaryServiceTest, IssueCertificateRejectsInvalidRequest) {

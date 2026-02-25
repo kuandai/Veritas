@@ -64,6 +64,41 @@ class FixedWindowRateLimiter final : public RateLimiter {
   FixedWindowRateLimiterConfig config_;
 };
 
+struct RevokedTokenAbusePolicy {
+  size_t threshold = 5;
+  std::chrono::milliseconds window = std::chrono::seconds(300);
+  bool enforcement_enabled = false;
+  std::chrono::milliseconds enforcement_duration = std::chrono::seconds(300);
+  size_t max_tracked_tokens = 10000;
+};
+
+struct RevokedTokenAbuseResult {
+  bool threshold_crossed = false;
+  bool enforcement_activated = false;
+  size_t attempts_in_window = 0;
+};
+
+class RevokedTokenAbuseTracker {
+ public:
+  explicit RevokedTokenAbuseTracker(RevokedTokenAbusePolicy policy = {});
+
+  RevokedTokenAbuseResult RecordAttempt(std::string_view token_hash);
+  bool IsContainmentActive() const;
+
+ private:
+  struct Entry {
+    std::deque<std::chrono::steady_clock::time_point> attempts;
+    std::chrono::steady_clock::time_point last_seen{};
+  };
+
+  std::string SelectEvictionKeyLocked() const;
+
+  mutable std::mutex mutex_;
+  std::unordered_map<std::string, Entry> entries_;
+  RevokedTokenAbusePolicy policy_;
+  std::chrono::steady_clock::time_point containment_until_{};
+};
+
 std::string ExtractPeerIdentity(const grpc::ServerContext* context);
 
 }  // namespace veritas::notary

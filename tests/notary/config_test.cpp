@@ -112,6 +112,20 @@ TEST(NotaryConfigTest, LoadsSignerPolicyOverrides) {
   EXPECT_EQ(config.signer_hash_algorithm, "sha256");
 }
 
+TEST(NotaryConfigTest, LoadsRevokedTokenAbusePolicyOverrides) {
+  RequiredEnv env;
+  ScopedEnv threshold("NOTARY_REVOKED_TOKEN_ABUSE_THRESHOLD", "7");
+  ScopedEnv window("NOTARY_REVOKED_TOKEN_ABUSE_WINDOW_SECONDS", "900");
+  ScopedEnv enforcement("NOTARY_REVOKED_TOKEN_ENFORCEMENT_ENABLED", "true");
+  ScopedEnv duration("NOTARY_REVOKED_TOKEN_ENFORCEMENT_DURATION_SECONDS", "120");
+
+  const auto config = LoadConfig();
+  EXPECT_EQ(config.revoked_token_abuse_threshold, 7U);
+  EXPECT_EQ(config.revoked_token_abuse_window_seconds, 900U);
+  EXPECT_TRUE(config.revoked_token_enforcement_enabled);
+  EXPECT_EQ(config.revoked_token_enforcement_duration_seconds, 120U);
+}
+
 TEST(NotaryConfigTest, InvalidRateLimitConfigFailsClosed) {
   RequiredEnv env;
   ScopedEnv invalid_identity_max("NOTARY_RATE_LIMIT_IDENTITY_MAX_REQUESTS", "0");
@@ -127,6 +141,12 @@ TEST(NotaryConfigTest, InvalidSignerSkewConfigFailsClosed) {
 TEST(NotaryConfigTest, InvalidSignerHashConfigFailsClosed) {
   RequiredEnv env;
   ScopedEnv invalid_hash("NOTARY_SIGNER_HASH_ALGORITHM", "sha512");
+  EXPECT_THROW(LoadConfig(), std::runtime_error);
+}
+
+TEST(NotaryConfigTest, InvalidRevokedTokenAbusePolicyFailsClosed) {
+  RequiredEnv env;
+  ScopedEnv invalid_threshold("NOTARY_REVOKED_TOKEN_ABUSE_THRESHOLD", "100001");
   EXPECT_THROW(LoadConfig(), std::runtime_error);
 }
 

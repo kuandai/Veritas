@@ -186,6 +186,7 @@ if(VERITAS_ENABLE_PROTO_TESTS)
     notary/authorizer_test.cpp
     notary/config_test.cpp
     notary/notary_service_test.cpp
+    notary/security_controls_test.cpp
     notary/signer_test.cpp
     notary/server_integration_test.cpp
     shared/issuance_store_test.cpp

@@ -20,7 +20,9 @@ class NotaryServiceImpl final : public veritas::notary::v1::Notary::Service {
                     std::shared_ptr<veritas::shared::IssuanceStore> issuance_store,
                     std::shared_ptr<RateLimiter> peer_rate_limiter = nullptr,
                     std::shared_ptr<RateLimiter> identity_rate_limiter = nullptr,
-                    std::shared_ptr<SecurityMetrics> security_metrics = nullptr);
+                    std::shared_ptr<SecurityMetrics> security_metrics = nullptr,
+                    std::shared_ptr<RevokedTokenAbuseTracker> revoked_token_abuse_tracker =
+                        nullptr);
 
   grpc::Status IssueCertificate(
       grpc::ServerContext* context,
@@ -46,6 +48,7 @@ class NotaryServiceImpl final : public veritas::notary::v1::Notary::Service {
   std::shared_ptr<RateLimiter> peer_rate_limiter_;
   std::shared_ptr<RateLimiter> identity_rate_limiter_;
   std::shared_ptr<SecurityMetrics> security_metrics_;
+  std::shared_ptr<RevokedTokenAbuseTracker> revoked_token_abuse_tracker_;
 };
 
 }  // namespace veritas::notary

@@ -120,6 +120,18 @@ NotaryConfig LoadConfig() {
   config.rate_limit_peer_window_seconds = GetEnvOrDefaultSize(
       "NOTARY_RATE_LIMIT_PEER_WINDOW_SECONDS",
       config.rate_limit_peer_window_seconds);
+  config.revoked_token_abuse_threshold = GetEnvOrDefaultSize(
+      "NOTARY_REVOKED_TOKEN_ABUSE_THRESHOLD",
+      config.revoked_token_abuse_threshold);
+  config.revoked_token_abuse_window_seconds = GetEnvOrDefaultSize(
+      "NOTARY_REVOKED_TOKEN_ABUSE_WINDOW_SECONDS",
+      config.revoked_token_abuse_window_seconds);
+  config.revoked_token_enforcement_enabled = GetEnvOrDefaultBool(
+      "NOTARY_REVOKED_TOKEN_ENFORCEMENT_ENABLED",
+      config.revoked_token_enforcement_enabled);
+  config.revoked_token_enforcement_duration_seconds = GetEnvOrDefaultSize(
+      "NOTARY_REVOKED_TOKEN_ENFORCEMENT_DURATION_SECONDS",
+      config.revoked_token_enforcement_duration_seconds);
 
   if (config.bind_addr.empty()) {
     throw std::runtime_error("NOTARY_BIND_ADDR is required");
@@ -159,6 +171,18 @@ NotaryConfig LoadConfig() {
       config.store_uri.empty()) {
     throw std::runtime_error(
         "NOTARY_STORE_URI is required when NOTARY_STORE_BACKEND=redis");
+  }
+  if (config.revoked_token_abuse_threshold > 100000) {
+    throw std::runtime_error(
+        "NOTARY_REVOKED_TOKEN_ABUSE_THRESHOLD must be <= 100000");
+  }
+  if (config.revoked_token_abuse_window_seconds > 86400) {
+    throw std::runtime_error(
+        "NOTARY_REVOKED_TOKEN_ABUSE_WINDOW_SECONDS must be <= 86400");
+  }
+  if (config.revoked_token_enforcement_duration_seconds > 86400) {
+    throw std::runtime_error(
+        "NOTARY_REVOKED_TOKEN_ENFORCEMENT_DURATION_SECONDS must be <= 86400");
   }
 
   return config;
