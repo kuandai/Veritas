@@ -53,4 +53,43 @@ TEST(SessionCacheTest, CleanupExpiredRemovesEntries) {
   EXPECT_FALSE(cache.Get("expired").has_value());
 }
 
+TEST(SessionCacheTest, CompletedSessionCanBeFetchedForReplay) {
+  SessionCache cache(std::chrono::seconds(5));
+  CompletedSrpSession completed;
+  completed.session_id = "session-1";
+  completed.client_proof_hash = "proof-hash";
+  completed.server_proof = "server-proof";
+  completed.user_uuid = "user-1";
+  completed.refresh_token = "refresh-1";
+  completed.token_expires_at =
+      std::chrono::system_clock::now() + std::chrono::hours(1);
+  completed.expires_at =
+      std::chrono::system_clock::now() + std::chrono::seconds(5);
+
+  cache.InsertCompleted(completed);
+
+  const auto found = cache.GetCompleted("session-1");
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(found->client_proof_hash, "proof-hash");
+  EXPECT_EQ(found->refresh_token, "refresh-1");
+}
+
+TEST(SessionCacheTest, CleanupExpiredRemovesCompletedEntries) {
+  SessionCache cache(std::chrono::seconds(5));
+  CompletedSrpSession completed;
+  completed.session_id = "expired-completed";
+  completed.client_proof_hash = "proof-hash";
+  completed.server_proof = "server-proof";
+  completed.user_uuid = "user-1";
+  completed.refresh_token = "refresh-1";
+  completed.token_expires_at =
+      std::chrono::system_clock::now() - std::chrono::seconds(10);
+  completed.expires_at =
+      std::chrono::system_clock::now() - std::chrono::seconds(1);
+
+  cache.InsertCompleted(completed);
+  cache.CleanupExpired();
+  EXPECT_FALSE(cache.GetCompleted("expired-completed").has_value());
+}
+
 }  // namespace veritas::gatekeeper

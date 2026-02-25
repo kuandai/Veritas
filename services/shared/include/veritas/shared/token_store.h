@@ -18,6 +18,7 @@ struct TokenRecord {
   std::string token_hash;
   std::string user_uuid;
   std::chrono::system_clock::time_point expires_at;
+  std::chrono::system_clock::time_point grace_expires_at{};
   bool is_revoked = false;
   std::string revoke_reason;
   std::chrono::system_clock::time_point revoked_at{};
@@ -45,6 +46,8 @@ class TokenStore {
   virtual TokenStatus GetTokenStatus(const std::string& token_hash) = 0;
   virtual void RevokeToken(const std::string& token_hash,
                            const std::string& reason) = 0;
+  virtual void RotateTokensForUser(const std::string& user_uuid,
+                                   std::chrono::seconds grace_ttl) = 0;
   virtual void RevokeUser(const std::string& user_uuid) = 0;
 };
 
@@ -91,6 +94,8 @@ class InMemoryTokenStore final : public TokenStore {
   TokenStatus GetTokenStatus(const std::string& token_hash) override;
   void RevokeToken(const std::string& token_hash,
                    const std::string& reason) override;
+  void RotateTokensForUser(const std::string& user_uuid,
+                           std::chrono::seconds grace_ttl) override;
   void RevokeUser(const std::string& user_uuid) override;
 
  private:
@@ -127,6 +132,8 @@ class RedisTokenStore final : public TokenStore {
   TokenStatus GetTokenStatus(const std::string& token_hash) override;
   void RevokeToken(const std::string& token_hash,
                    const std::string& reason) override;
+  void RotateTokensForUser(const std::string& user_uuid,
+                           std::chrono::seconds grace_ttl) override;
   void RevokeUser(const std::string& user_uuid) override;
 
  private:
@@ -143,6 +150,8 @@ class RedisTokenStore final : public TokenStore {
   TokenStatus GetTokenStatus(const std::string& token_hash) override;
   void RevokeToken(const std::string& token_hash,
                    const std::string& reason) override;
+  void RotateTokensForUser(const std::string& user_uuid,
+                           std::chrono::seconds grace_ttl) override;
   void RevokeUser(const std::string& user_uuid) override;
 
  private:

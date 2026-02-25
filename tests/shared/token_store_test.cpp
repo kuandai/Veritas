@@ -2,6 +2,7 @@
 #include "veritas/shared/token_store.h"
 
 #include <chrono>
+#include <thread>
 
 #include <gtest/gtest.h>
 
@@ -76,6 +77,30 @@ TEST(TokenStoreTest,
   ASSERT_TRUE(issuance.has_value());
   EXPECT_EQ(issuance->certificate_serial, "serial-1");
   EXPECT_EQ(issuance->state, IssuanceState::Active);
+}
+
+TEST(TokenStoreTest, RotateTokensForUserEntersGraceThenExpiresToRevoked) {
+  InMemoryTokenStore store;
+  store.PutToken(MakeToken("hash-1", "user-1"));
+
+  store.RotateTokensForUser("user-1", std::chrono::seconds(1));
+  const auto during_grace = store.GetTokenStatus("hash-1");
+  EXPECT_EQ(during_grace.state, TokenState::Active);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+  const auto after_grace = store.GetTokenStatus("hash-1");
+  EXPECT_EQ(after_grace.state, TokenState::Revoked);
+  EXPECT_EQ(after_grace.reason, "rotation-grace-expired");
+}
+
+TEST(TokenStoreTest, RotateTokensForUserDoesNotAffectOtherPrincipals) {
+  InMemoryTokenStore store;
+  store.PutToken(MakeToken("hash-1", "user-1"));
+  store.PutToken(MakeToken("hash-2", "user-2"));
+
+  store.RotateTokensForUser("user-1", std::chrono::seconds(1));
+  EXPECT_EQ(store.GetTokenStatus("hash-1").state, TokenState::Active);
+  EXPECT_EQ(store.GetTokenStatus("hash-2").state, TokenState::Active);
 }
 
 }  // namespace

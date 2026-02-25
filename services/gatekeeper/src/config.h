@@ -11,6 +11,7 @@ struct GatekeeperConfig {
   std::string tls_ca_path;
   bool tls_require_client_cert = false;
   int token_ttl_days = 30;
+  int token_rotation_grace_seconds = 60;
   int rate_limit_per_minute = 5;
   std::string token_store_uri;
   std::string fake_salt_secret;

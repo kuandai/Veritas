@@ -146,7 +146,9 @@ Implemented
   - revocation-state updates.
 - Shared token store abstraction is implemented:
   - token model and storage interface,
+  - per-user token rotation with bounded grace windows,
   - in-memory tombstone/replay-rejection semantics,
+  - grace-expiry transition to revoked (`rotation-grace-expired`),
   - Redis URI parsing (`redis://`, `rediss://`) with fail-closed TLS validation.
 - Backends:
   - in-memory (thread-safe),
@@ -280,8 +282,13 @@ Implemented
   - `BeginAuthRequest.client_start` carries the SASL client initial response.
   - Runtime `SASL_ENABLE=false` is rejected at startup in this build.
   - Session ids stored in a TTL cache and consumed atomically on `FinishAuth`.
+  - successful `FinishAuth` payloads are cached for deterministic replay with
+    session-id + client-proof matching.
   - Refresh token issuance + SHA-256 hashing, persisted to Redis when
     `TOKEN_STORE_URI` is set (in-memory fallback otherwise).
+  - per-user token rotation places previous active tokens into bounded grace
+    (`TOKEN_ROTATION_GRACE_SECONDS`, default 60) before automatic revoked
+    transition with reason `rotation-grace-expired`.
   - Revocation/tombstone model:
     - revoked tokens carry reason metadata + revocation timestamp.
     - tombstone retention prevents replay of revoked token hashes.
@@ -304,15 +311,16 @@ Placeholders / incomplete
 - Redis TLS requires `redis-plus-plus` to be built with TLS support.
 - SASL error mapping is limited to a minimal gRPC status translation.
 - Unit tests cover fake salt, token hashing, rate limiting, config validation,
-  TLS credential validation, token store behavior, and session cache handling.
-- Integration tests cover SRP handshake happy path + invalid proof + client
-  revocation lock propagation.
+  TLS credential validation, token-store grace/revocation behavior, and session
+  cache replay handling.
+- Integration tests cover SRP handshake happy path, deterministic `FinishAuth`
+  replay, invalid proof, and client revocation lock propagation.
 - Redis TLS integration tests cover fail-closed behavior for invalid `rediss://`
   configuration and real endpoint validation when `VERITAS_REDIS_TLS_URI` is
   set.
 
 Aspirational
-- Streamlined SRP verifier provisioning and server-side rotation policy.
+- Streamlined SRP verifier provisioning.
 - Exportable rate limiting and analytics metrics.
 
 ## Cross-cutting gaps (incomplete)

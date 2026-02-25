@@ -568,18 +568,38 @@ grpc::Status SaslServer::FinishAuth(
                         "client_proof is required");
   }
 
-  session_cache_.CleanupExpired();
-  const auto session = session_cache_.Take(request.session_id());
-  if (!session) {
-    return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
-                        "session not found");
-  }
-  if (session->is_fake) {
-    return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
-                        "invalid credentials");
-  }
-
   try {
+    const std::string client_proof_hash = HashTokenSha256(request.client_proof());
+    session_cache_.CleanupExpired();
+    const auto completed = session_cache_.GetCompleted(request.session_id());
+    if (completed.has_value()) {
+      if (completed->client_proof_hash != client_proof_hash) {
+        return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
+                            "session proof mismatch");
+      }
+      response->set_server_proof(completed->server_proof);
+      response->set_user_uuid(completed->user_uuid);
+      response->set_refresh_token(completed->refresh_token);
+      const auto seconds =
+          std::chrono::duration_cast<std::chrono::seconds>(
+              completed->token_expires_at.time_since_epoch())
+              .count();
+      auto* ts = response->mutable_expires_at();
+      ts->set_seconds(static_cast<int64_t>(seconds));
+      ts->set_nanos(0);
+      return grpc::Status::OK;
+    }
+
+    const auto session = session_cache_.Take(request.session_id());
+    if (!session) {
+      return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
+                          "session not found");
+    }
+    if (session->is_fake) {
+      return grpc::Status(grpc::StatusCode::UNAUTHENTICATED,
+                          "invalid credentials");
+    }
+
     const auto now = std::chrono::system_clock::now();
     const auto expires_at =
         now + std::chrono::hours(24 * options_.token_ttl_days);
@@ -591,9 +611,14 @@ grpc::Status SaslServer::FinishAuth(
       }
       std::string refresh_token = GenerateRefreshToken();
       const std::string token_hash = HashTokenSha256(refresh_token);
-      const std::string user_uuid = "mock-" + session->session_id;
+      const std::string user_uuid = "mock-" + session->login_username;
 
-      TokenRecord record{token_hash, user_uuid, expires_at, false};
+      token_store_->RotateTokensForUser(user_uuid,
+                                        options_.token_rotation_grace_ttl);
+      TokenRecord record;
+      record.token_hash = token_hash;
+      record.user_uuid = user_uuid;
+      record.expires_at = expires_at;
       token_store_->PutToken(record);
 
       std::string server_proof = GenerateRandomBytes(32);
@@ -608,6 +633,17 @@ grpc::Status SaslServer::FinishAuth(
               .count();
       ts->set_seconds(static_cast<int64_t>(seconds));
       ts->set_nanos(0);
+
+      CompletedSrpSession completed_session;
+      completed_session.session_id = request.session_id();
+      completed_session.client_proof_hash = client_proof_hash;
+      completed_session.server_proof = server_proof;
+      completed_session.user_uuid = user_uuid;
+      completed_session.refresh_token = refresh_token;
+      completed_session.token_expires_at = expires_at;
+      completed_session.expires_at = now + options_.session_ttl;
+      session_cache_.InsertCompleted(completed_session);
+
       SecureErase(&refresh_token);
       SecureErase(&server_proof);
       return grpc::Status::OK;
@@ -661,7 +697,11 @@ grpc::Status SaslServer::FinishAuth(
 
     std::string refresh_token = GenerateRefreshToken();
     const std::string token_hash = HashTokenSha256(refresh_token);
-    TokenRecord record{token_hash, user_uuid, expires_at, false};
+    token_store_->RotateTokensForUser(user_uuid, options_.token_rotation_grace_ttl);
+    TokenRecord record;
+    record.token_hash = token_hash;
+    record.user_uuid = user_uuid;
+    record.expires_at = expires_at;
     token_store_->PutToken(record);
 
     std::string server_proof;
@@ -679,6 +719,17 @@ grpc::Status SaslServer::FinishAuth(
             .count();
     ts->set_seconds(static_cast<int64_t>(seconds));
     ts->set_nanos(0);
+
+    CompletedSrpSession completed_session;
+    completed_session.session_id = request.session_id();
+    completed_session.client_proof_hash = client_proof_hash;
+    completed_session.server_proof = server_proof;
+    completed_session.user_uuid = user_uuid;
+    completed_session.refresh_token = refresh_token;
+    completed_session.token_expires_at = expires_at;
+    completed_session.expires_at = now + options_.session_ttl;
+    session_cache_.InsertCompleted(completed_session);
+
     SecureErase(&refresh_token);
     SecureErase(&server_proof);
     return grpc::Status::OK;

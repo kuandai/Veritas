@@ -20,6 +20,7 @@ struct SaslServerOptions {
   std::string fake_salt_secret;
   std::chrono::seconds session_ttl{std::chrono::minutes(10)};
   int token_ttl_days = 30;
+  std::chrono::seconds token_rotation_grace_ttl{std::chrono::seconds(60)};
   std::shared_ptr<TokenStore> token_store;
   bool enable_sasl = true;
   std::string sasl_service = "veritas_gatekeeper";

@@ -44,9 +44,25 @@ std::optional<SrpSession> SessionCache::Take(const std::string& session_id) {
   return result;
 }
 
+void SessionCache::InsertCompleted(const CompletedSrpSession& session) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  completed_sessions_[session.session_id] = session;
+}
+
+std::optional<CompletedSrpSession> SessionCache::GetCompleted(
+    const std::string& session_id) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  auto it = completed_sessions_.find(session_id);
+  if (it == completed_sessions_.end()) {
+    return std::nullopt;
+  }
+  return it->second;
+}
+
 void SessionCache::Erase(const std::string& session_id) {
   std::lock_guard<std::mutex> lock(mutex_);
   sessions_.erase(session_id);
+  completed_sessions_.erase(session_id);
 }
 
 void SessionCache::CleanupExpired() {
@@ -55,6 +71,13 @@ void SessionCache::CleanupExpired() {
   for (auto it = sessions_.begin(); it != sessions_.end();) {
     if (it->second.expires_at <= now) {
       it = sessions_.erase(it);
+    } else {
+      ++it;
+    }
+  }
+  for (auto it = completed_sessions_.begin(); it != completed_sessions_.end();) {
+    if (it->second.expires_at <= now) {
+      it = completed_sessions_.erase(it);
     } else {
       ++it;
     }

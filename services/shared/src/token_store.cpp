@@ -301,6 +301,14 @@ std::string TombstoneKey(const std::string& token_hash) {
   return "token_tombstone:" + token_hash;
 }
 
+bool HasGraceDeadline(const TokenRecord& record) {
+  return record.grace_expires_at.time_since_epoch().count() > 0;
+}
+
+constexpr std::string_view kRotationGraceReason = "rotation-grace";
+constexpr std::string_view kRotationGraceExpiredReason =
+    "rotation-grace-expired";
+
 }  // namespace
 
 TokenStoreError::TokenStoreError(Kind kind, const std::string& message)
@@ -308,6 +316,17 @@ TokenStoreError::TokenStoreError(Kind kind, const std::string& message)
 
 void InMemoryTokenStore::CleanupExpiredLocked() {
   const auto now = std::chrono::system_clock::now();
+  for (auto& [token_hash, record] : tokens_) {
+    if (!record.is_revoked && HasGraceDeadline(record) &&
+        record.grace_expires_at <= now) {
+      record.is_revoked = true;
+      record.revoke_reason = std::string(kRotationGraceExpiredReason);
+      record.revoked_at = now;
+      tombstones_[token_hash] =
+          TombstoneRecord{record.user_uuid, record.revoke_reason, now,
+                          now + tombstone_ttl_};
+    }
+  }
   for (auto it = tombstones_.begin(); it != tombstones_.end();) {
     if (it->second.expires_at <= now) {
       it = tombstones_.erase(it);
@@ -342,9 +361,19 @@ std::optional<TokenRecord> InMemoryTokenStore::GetToken(
 TokenStatus InMemoryTokenStore::GetTokenStatus(const std::string& token_hash) {
   std::lock_guard<std::mutex> lock(mutex_);
   CleanupExpiredLocked();
+  const auto now = std::chrono::system_clock::now();
 
-  const auto token_it = tokens_.find(token_hash);
+  auto token_it = tokens_.find(token_hash);
   if (token_it != tokens_.end()) {
+    if (!token_it->second.is_revoked && HasGraceDeadline(token_it->second) &&
+        token_it->second.grace_expires_at <= now) {
+      token_it->second.is_revoked = true;
+      token_it->second.revoke_reason = std::string(kRotationGraceExpiredReason);
+      token_it->second.revoked_at = now;
+      tombstones_[token_hash] = TombstoneRecord{
+          token_it->second.user_uuid, token_it->second.revoke_reason, now,
+          now + tombstone_ttl_};
+    }
     TokenStatus status;
     status.user_uuid = token_it->second.user_uuid;
     if (token_it->second.is_revoked) {
@@ -387,9 +416,32 @@ void InMemoryTokenStore::RevokeToken(const std::string& token_hash,
     token_it->second.is_revoked = true;
     token_it->second.revoke_reason = effective_reason;
     token_it->second.revoked_at = now;
+    token_it->second.grace_expires_at = {};
     tombstone.user_uuid = token_it->second.user_uuid;
   }
   tombstones_[token_hash] = tombstone;
+}
+
+void InMemoryTokenStore::RotateTokensForUser(const std::string& user_uuid,
+                                             std::chrono::seconds grace_ttl) {
+  if (grace_ttl.count() <= 0) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(mutex_);
+  CleanupExpiredLocked();
+  const auto now = std::chrono::system_clock::now();
+  const auto grace_expires_at = now + grace_ttl;
+  for (auto& [token_hash, record] : tokens_) {
+    (void)token_hash;
+    if (record.user_uuid != user_uuid || record.is_revoked) {
+      continue;
+    }
+    if (HasGraceDeadline(record)) {
+      continue;
+    }
+    record.grace_expires_at = grace_expires_at;
+    record.revoke_reason = std::string(kRotationGraceReason);
+  }
 }
 
 void InMemoryTokenStore::RevokeUser(const std::string& user_uuid) {
@@ -401,6 +453,7 @@ void InMemoryTokenStore::RevokeUser(const std::string& user_uuid) {
       entry.second.is_revoked = true;
       entry.second.revoke_reason = "user-revoked";
       entry.second.revoked_at = now;
+      entry.second.grace_expires_at = {};
       tombstones_[entry.first] = TombstoneRecord{
           user_uuid, "user-revoked", now, now + tombstone_ttl_};
     }
@@ -428,6 +481,11 @@ void RedisTokenStore::PutToken(const TokenRecord& record) {
             record.expires_at.time_since_epoch())
             .count();
     fields.emplace("expires_at", std::to_string(expires_at));
+    const auto grace_expires_at =
+        std::chrono::duration_cast<std::chrono::seconds>(
+            record.grace_expires_at.time_since_epoch())
+            .count();
+    fields.emplace("grace_expires_at", std::to_string(grace_expires_at));
     fields.emplace("is_revoked", record.is_revoked ? "1" : "0");
     fields.emplace("revoke_reason", record.revoke_reason);
     const auto revoked_at =
@@ -464,6 +522,13 @@ std::optional<TokenRecord> RedisTokenStore::GetToken(
     const auto expires_at = std::stoll(fields["expires_at"]);
     record.expires_at =
         std::chrono::system_clock::time_point(std::chrono::seconds(expires_at));
+    const auto grace_it = fields.find("grace_expires_at");
+    const auto grace_expires_at =
+        grace_it == fields.end() || grace_it->second.empty()
+            ? 0
+            : std::stoll(grace_it->second);
+    record.grace_expires_at = std::chrono::system_clock::time_point(
+        std::chrono::seconds(grace_expires_at));
     record.is_revoked = fields["is_revoked"] == "1";
     const auto revoked_it = fields.find("revoked_at");
     const auto revoked_at =
@@ -504,7 +569,22 @@ TokenStatus RedisTokenStore::GetTokenStatus(const std::string& token_hash) {
         status.revoked_at = std::chrono::system_clock::time_point(
             std::chrono::seconds(revoked_at));
       } else {
-        status.state = TokenState::Active;
+        const auto grace_it = fields.find("grace_expires_at");
+        const auto grace_expires_at =
+            grace_it == fields.end() || grace_it->second.empty()
+                ? 0
+                : std::stoll(grace_it->second);
+        if (grace_expires_at > 0 &&
+            std::chrono::system_clock::time_point(
+                std::chrono::seconds(grace_expires_at)) <=
+                std::chrono::system_clock::now()) {
+          RevokeToken(token_hash, std::string(kRotationGraceExpiredReason));
+          status.state = TokenState::Revoked;
+          status.reason = std::string(kRotationGraceExpiredReason);
+          status.revoked_at = std::chrono::system_clock::now();
+        } else {
+          status.state = TokenState::Active;
+        }
       }
       return status;
     }
@@ -535,9 +615,42 @@ void RedisTokenStore::RevokeToken(const std::string& token_hash,
         reason.empty() ? "revoked" : reason;
     redis_->redis.hset(TokenKey(token_hash), "is_revoked", "1");
     redis_->redis.hset(TokenKey(token_hash), "revoke_reason", effective_reason);
+    redis_->redis.hset(TokenKey(token_hash), "grace_expires_at", "0");
     redis_->redis.hset(TokenKey(token_hash), "revoked_at", std::to_string(seconds));
     redis_->redis.setex(TombstoneKey(token_hash), std::chrono::hours(24),
                         effective_reason);
+  } catch (const sw::redis::Error& ex) {
+    throw TokenStoreError(TokenStoreError::Kind::Unavailable, ex.what());
+  }
+}
+
+void RedisTokenStore::RotateTokensForUser(const std::string& user_uuid,
+                                          std::chrono::seconds grace_ttl) {
+  if (grace_ttl.count() <= 0) {
+    return;
+  }
+  try {
+    std::unordered_set<std::string> tokens;
+    redis_->redis.smembers(UserTokensKey(user_uuid),
+                           std::inserter(tokens, tokens.begin()));
+    const auto now = std::chrono::system_clock::now();
+    const auto grace_expires_at =
+        std::chrono::duration_cast<std::chrono::seconds>((now + grace_ttl).time_since_epoch())
+            .count();
+    for (const auto& token_hash : tokens) {
+      const auto key = TokenKey(token_hash);
+      const auto is_revoked = redis_->redis.hget(key, "is_revoked");
+      if (is_revoked.has_value() && *is_revoked == "1") {
+        continue;
+      }
+      const auto existing_grace = redis_->redis.hget(key, "grace_expires_at");
+      if (existing_grace.has_value() && *existing_grace != "0" &&
+          !existing_grace->empty()) {
+        continue;
+      }
+      redis_->redis.hset(key, "grace_expires_at", std::to_string(grace_expires_at));
+      redis_->redis.hset(key, "revoke_reason", std::string(kRotationGraceReason));
+    }
   } catch (const sw::redis::Error& ex) {
     throw TokenStoreError(TokenStoreError::Kind::Unavailable, ex.what());
   }
@@ -579,6 +692,12 @@ TokenStatus RedisTokenStore::GetTokenStatus(const std::string& /*token_hash*/) {
 
 void RedisTokenStore::RevokeToken(const std::string& /*token_hash*/,
                                   const std::string& /*reason*/) {
+  throw TokenStoreError(TokenStoreError::Kind::Unavailable,
+                        "Redis support is disabled");
+}
+
+void RedisTokenStore::RotateTokensForUser(const std::string& /*user_uuid*/,
+                                          std::chrono::seconds /*grace_ttl*/) {
   throw TokenStoreError(TokenStoreError::Kind::Unavailable,
                         "Redis support is disabled");
 }

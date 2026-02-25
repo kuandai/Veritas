@@ -38,6 +38,12 @@ class FailingTokenStore final : public TokenStore {
                           "token store unavailable");
   }
 
+  void RotateTokensForUser(const std::string& /*user_uuid*/,
+                           std::chrono::seconds /*grace_ttl*/) override {
+    throw TokenStoreError(TokenStoreError::Kind::Unavailable,
+                          "token store unavailable");
+  }
+
   void RevokeUser(const std::string& /*user_uuid*/) override {
     throw TokenStoreError(TokenStoreError::Kind::Unavailable,
                           "token store unavailable");
@@ -175,7 +181,7 @@ TEST(SaslServerTest, FinishAuthReturnsTokenAndUuid) {
   EXPECT_LE(expires_at, expected + 5);
 }
 
-TEST(SaslServerTest, FinishAuthSessionReplayFails) {
+TEST(SaslServerTest, FinishAuthSessionReplayReturnsCachedResult) {
   SaslServer server(DefaultOptions());
   veritas::auth::v1::BeginAuthRequest begin_request;
   veritas::auth::v1::BeginAuthResponse begin_response;
@@ -190,6 +196,30 @@ TEST(SaslServerTest, FinishAuthSessionReplayFails) {
 
   veritas::auth::v1::FinishAuthResponse second_response;
   const grpc::Status status = server.FinishAuth(finish_request, &second_response);
+  ASSERT_TRUE(status.ok());
+  EXPECT_EQ(second_response.refresh_token(), finish_response.refresh_token());
+  EXPECT_EQ(second_response.server_proof(), finish_response.server_proof());
+  EXPECT_EQ(second_response.user_uuid(), finish_response.user_uuid());
+}
+
+TEST(SaslServerTest, FinishAuthReplayRejectsProofMismatch) {
+  SaslServer server(DefaultOptions());
+  veritas::auth::v1::BeginAuthRequest begin_request;
+  veritas::auth::v1::BeginAuthResponse begin_response;
+  begin_request.set_login_username("alice");
+  ASSERT_TRUE(server.BeginAuth(begin_request, &begin_response).ok());
+
+  veritas::auth::v1::FinishAuthRequest finish_request;
+  veritas::auth::v1::FinishAuthResponse finish_response;
+  finish_request.set_session_id(begin_response.session_id());
+  finish_request.set_client_proof("proof");
+  ASSERT_TRUE(server.FinishAuth(finish_request, &finish_response).ok());
+
+  veritas::auth::v1::FinishAuthRequest replay_request;
+  replay_request.set_session_id(begin_response.session_id());
+  replay_request.set_client_proof("different-proof");
+  veritas::auth::v1::FinishAuthResponse replay_response;
+  const grpc::Status status = server.FinishAuth(replay_request, &replay_response);
   EXPECT_EQ(status.error_code(), grpc::StatusCode::UNAUTHENTICATED);
 }
 
@@ -231,8 +261,11 @@ TEST(SaslServerTest, FinishAuthConcurrentCallsAllowSingleSuccess) {
       ++unauthenticated_count;
     }
   }
-  EXPECT_EQ(success_count, 1);
-  EXPECT_EQ(unauthenticated_count, 1);
+  EXPECT_TRUE((success_count == 1 && unauthenticated_count == 1) ||
+              (success_count == 2 && unauthenticated_count == 0));
+  if (success_count == 2) {
+    EXPECT_EQ(responses[0].refresh_token(), responses[1].refresh_token());
+  }
 }
 
 TEST(SaslServerTest, TokenStoreUnavailableMapsToGrpcUnavailable) {
@@ -305,6 +338,50 @@ TEST(SaslServerTest, RevokeTokenUpdatesStatusToRevoked) {
             veritas::auth::v1::TOKEN_STATUS_STATE_REVOKED);
   EXPECT_EQ(revoked_response.reason(), "test-revoke");
   EXPECT_EQ(revoked_response.user_uuid(), active_response.user_uuid());
+}
+
+TEST(SaslServerTest, RotationGraceExpiresOldTokenAfterNewLogin) {
+  SaslServerOptions options = DefaultOptions();
+  options.token_rotation_grace_ttl = std::chrono::seconds(1);
+  SaslServer server(options);
+
+  veritas::auth::v1::BeginAuthRequest begin_one;
+  veritas::auth::v1::BeginAuthResponse begin_response_one;
+  begin_one.set_login_username("alice");
+  ASSERT_TRUE(server.BeginAuth(begin_one, &begin_response_one).ok());
+
+  veritas::auth::v1::FinishAuthRequest finish_one;
+  veritas::auth::v1::FinishAuthResponse finish_response_one;
+  finish_one.set_session_id(begin_response_one.session_id());
+  finish_one.set_client_proof("proof-1");
+  ASSERT_TRUE(server.FinishAuth(finish_one, &finish_response_one).ok());
+
+  veritas::auth::v1::BeginAuthRequest begin_two;
+  veritas::auth::v1::BeginAuthResponse begin_response_two;
+  begin_two.set_login_username("alice");
+  ASSERT_TRUE(server.BeginAuth(begin_two, &begin_response_two).ok());
+
+  veritas::auth::v1::FinishAuthRequest finish_two;
+  veritas::auth::v1::FinishAuthResponse finish_response_two;
+  finish_two.set_session_id(begin_response_two.session_id());
+  finish_two.set_client_proof("proof-2");
+  ASSERT_TRUE(server.FinishAuth(finish_two, &finish_response_two).ok());
+  EXPECT_NE(finish_response_one.refresh_token(), finish_response_two.refresh_token());
+
+  veritas::auth::v1::GetTokenStatusRequest status_request_old;
+  veritas::auth::v1::GetTokenStatusResponse status_response_old;
+  status_request_old.set_refresh_token(finish_response_one.refresh_token());
+  ASSERT_TRUE(server.GetTokenStatus(status_request_old, &status_response_old).ok());
+  EXPECT_EQ(status_response_old.state(),
+            veritas::auth::v1::TOKEN_STATUS_STATE_ACTIVE);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+  veritas::auth::v1::GetTokenStatusResponse status_response_expired;
+  ASSERT_TRUE(
+      server.GetTokenStatus(status_request_old, &status_response_expired).ok());
+  EXPECT_EQ(status_response_expired.state(),
+            veritas::auth::v1::TOKEN_STATUS_STATE_REVOKED);
+  EXPECT_EQ(status_response_expired.reason(), "rotation-grace-expired");
 }
 
 }  // namespace veritas::gatekeeper

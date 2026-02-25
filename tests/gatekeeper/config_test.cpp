@@ -83,6 +83,19 @@ TEST(ConfigTest, LoadConfigRejectsSaslDisabled) {
   EXPECT_THROW(LoadConfig(), std::runtime_error);
 }
 
+TEST(ConfigTest, LoadConfigReadsTokenRotationGraceSeconds) {
+  RequiredEnv env;
+  ScopedEnv grace("TOKEN_ROTATION_GRACE_SECONDS", "90");
+  const auto config = LoadConfig();
+  EXPECT_EQ(config.token_rotation_grace_seconds, 90);
+}
+
+TEST(ConfigTest, LoadConfigRejectsNonPositiveTokenRotationGraceSeconds) {
+  RequiredEnv env;
+  ScopedEnv grace("TOKEN_ROTATION_GRACE_SECONDS", "0");
+  EXPECT_THROW(LoadConfig(), std::runtime_error);
+}
+
 TEST(ConfigTest, ReadFileReturnsContents) {
   const std::string path = TempPath("veritas_readfile");
   {

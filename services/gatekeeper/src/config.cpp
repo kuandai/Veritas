@@ -52,6 +52,8 @@ GatekeeperConfig LoadConfig() {
   config.tls_require_client_cert =
       GetEnvOrDefaultBool("TLS_REQUIRE_CLIENT_CERT", false);
   config.token_ttl_days = GetEnvOrDefaultInt("TOKEN_TTL_DAYS", 30);
+  config.token_rotation_grace_seconds =
+      GetEnvOrDefaultInt("TOKEN_ROTATION_GRACE_SECONDS", 60);
   config.rate_limit_per_minute = GetEnvOrDefaultInt("RATE_LIMIT", 5);
   config.token_store_uri = GetEnvOrEmpty("TOKEN_STORE_URI");
   config.fake_salt_secret = GetEnvOrEmpty("FAKE_SALT_SECRET");
@@ -87,6 +89,10 @@ GatekeeperConfig LoadConfig() {
   if (config.tls_require_client_cert && config.tls_ca_path.empty()) {
     throw std::runtime_error(
         "TLS_CA_BUNDLE is required when TLS_REQUIRE_CLIENT_CERT is enabled");
+  }
+  if (config.token_rotation_grace_seconds <= 0) {
+    throw std::runtime_error(
+        "TOKEN_ROTATION_GRACE_SECONDS must be greater than zero");
   }
 
   return config;

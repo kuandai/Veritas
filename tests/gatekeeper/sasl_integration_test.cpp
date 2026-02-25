@@ -527,6 +527,90 @@ TEST(SaslIntegrationTest, SrpHandshakeHappyPath) {
   sasl_dispose(&client_conn);
 }
 
+TEST(SaslIntegrationTest, FinishAuthReplayReturnsDeterministicResult) {
+  SaslFixture fixture;
+  const auto setup = EnsureUserExists(fixture);
+  if (setup.kind == SaslSetupResultKind::Skip) {
+    GTEST_SKIP() << setup.message;
+  }
+  ASSERT_EQ(setup.kind, SaslSetupResultKind::Ok) << setup.message;
+  if (EnsureClientInit() != SASL_OK) {
+    GTEST_SKIP() << "SASL client initialization failed";
+  }
+
+  ClientCreds creds{fixture.username, fixture.password};
+  sasl_callback_t callbacks[] = {
+      {SASL_CB_AUTHNAME, reinterpret_cast<int (*)(void)>(&SaslGetSimple), &creds},
+      {SASL_CB_USER, reinterpret_cast<int (*)(void)>(&SaslGetSimple), &creds},
+      {SASL_CB_PASS, reinterpret_cast<int (*)(void)>(&SaslGetSecret), &creds},
+      {SASL_CB_LIST_END, nullptr, nullptr},
+  };
+
+  sasl_conn_t* client_conn = nullptr;
+  int rc = sasl_client_new(fixture.options.sasl_service.c_str(), "localhost",
+                           nullptr, nullptr, callbacks, 0, &client_conn);
+  ASSERT_EQ(rc, SASL_OK);
+
+  const char* client_out = nullptr;
+  unsigned client_out_len = 0;
+  const char* mech = nullptr;
+  rc = sasl_client_start(client_conn, "SRP", nullptr, &client_out,
+                         &client_out_len, &mech);
+  if (rc == SASL_NOMECH) {
+    sasl_dispose(&client_conn);
+    GTEST_SKIP() << "SRP mechanism not available for client";
+  }
+  ASSERT_TRUE(rc == SASL_CONTINUE || rc == SASL_OK);
+  if (!client_out || client_out_len == 0) {
+    sasl_dispose(&client_conn);
+    GTEST_SKIP() << "SRP client did not emit initial response";
+  }
+
+  veritas::auth::v1::BeginAuthRequest begin_request;
+  veritas::auth::v1::BeginAuthResponse begin_response;
+  begin_request.set_login_username(fixture.username);
+  begin_request.set_client_start(std::string(client_out, client_out_len));
+  const grpc::Status begin_status =
+      fixture.server->BeginAuth(begin_request, &begin_response);
+  if (!begin_status.ok()) {
+    if (IsSrpUnavailable(begin_status)) {
+      sasl_dispose(&client_conn);
+      GTEST_SKIP() << "SRP mechanism not available in SASL build";
+    }
+    ASSERT_TRUE(begin_status.ok());
+  }
+
+  rc = sasl_client_step(
+      client_conn, begin_response.server_public().data(),
+      static_cast<unsigned>(begin_response.server_public().size()), nullptr,
+      &client_out, &client_out_len);
+  ASSERT_TRUE(rc == SASL_CONTINUE || rc == SASL_OK);
+  ASSERT_TRUE(client_out != nullptr);
+  ASSERT_GT(client_out_len, 0u);
+
+  veritas::auth::v1::FinishAuthRequest finish_request;
+  finish_request.set_session_id(begin_response.session_id());
+  finish_request.set_client_proof(std::string(client_out, client_out_len));
+
+  veritas::auth::v1::FinishAuthResponse first_response;
+  const grpc::Status first_status =
+      fixture.server->FinishAuth(finish_request, &first_response);
+  ASSERT_TRUE(first_status.ok());
+
+  veritas::auth::v1::FinishAuthResponse replay_response;
+  const grpc::Status replay_status =
+      fixture.server->FinishAuth(finish_request, &replay_response);
+  ASSERT_TRUE(replay_status.ok());
+  EXPECT_EQ(replay_response.refresh_token(), first_response.refresh_token());
+  EXPECT_EQ(replay_response.user_uuid(), first_response.user_uuid());
+  EXPECT_EQ(replay_response.server_proof(), first_response.server_proof());
+  EXPECT_EQ(replay_response.expires_at().seconds(),
+            first_response.expires_at().seconds());
+  EXPECT_EQ(replay_response.expires_at().nanos(), first_response.expires_at().nanos());
+
+  sasl_dispose(&client_conn);
+}
+
 TEST(SaslIntegrationTest, BeginAuthKnownAndUnknownHaveEquivalentPublicShape) {
   SaslFixture fixture;
   const auto setup = EnsureUserExists(fixture);

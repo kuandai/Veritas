@@ -41,8 +41,18 @@ Authenticate clients and issue refresh tokens via a gRPC interface.
     server final payload in `server_proof` (accepting SRP's final
     `SASL_CONTINUE` as success when a server proof is present).
   - Session ids stored in a TTL cache and consumed atomically on `FinishAuth`.
+  - Successful `FinishAuth` results are cached by session id for bounded
+    deterministic replay; retries with the same session id and client proof
+    return the original token/proof payload.
   - Refresh token issuance + SHA-256 hashing stored in Redis when
     `TOKEN_STORE_URI` is set (in-memory fallback otherwise).
+  - Token rotation on successful auth:
+    - prior active tokens for the same principal are moved into a bounded grace
+      window,
+    - grace duration is controlled by `TOKEN_ROTATION_GRACE_SECONDS`
+      (default: 60),
+    - grace tokens transition to revoked with reason
+      `rotation-grace-expired` after the grace deadline.
   - Token persistence is implemented by shared storage primitives in
     `services/shared` and consumed through Gatekeeper compatibility wrappers.
   - Revocation/tombstone behavior:
@@ -73,6 +83,7 @@ SASL behavior is controlled by environment variables:
 - `SASL_PLUGIN_PATH` (optional)
 - `SASL_DBNAME` (optional, sasldb path)
 - `SASL_REALM` (optional)
+- `TOKEN_ROTATION_GRACE_SECONDS` (default: `60`, must be positive)
 `SASL_ENABLE=false` is rejected at startup in this build. Test-only mock auth
 is available only when Gatekeeper is compiled with
 `VERITAS_ENABLE_TEST_AUTH_BYPASS` and explicitly enabled through
@@ -109,13 +120,14 @@ Redis token-store URIs:
   fails closed when `rediss://` is configured without TLS-capable client libs.
 - gRPC error mapping is limited to current SASL status handling.
 - Unit tests cover fake salt, token hashing, rate limiting, config validation,
-  TLS credential validation, token store behavior (including tombstones/replay
-  rejection), and session cache handling.
-- Integration tests cover SRP handshake happy path + invalid proof + revocation
-  status paths (skipped
-  if SRP is unavailable in the SASL build).
+  TLS credential validation, token store behavior (including tombstones, grace
+  expiry, replay rejection), and session cache handling (including deterministic
+  `FinishAuth` replay cache behavior).
+- Integration tests cover SRP handshake happy path, deterministic
+  `FinishAuth` replay behavior, invalid proof handling, and revocation status
+  paths (skipped if SRP is unavailable in the SASL build).
 
 ## Aspirational
 
-- Streamlined SRP verifier provisioning and server-side rotation policy.
+- Streamlined SRP verifier provisioning.
 - Exportable metrics for rate limiting and analytics.

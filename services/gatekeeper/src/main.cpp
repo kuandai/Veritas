@@ -1,3 +1,4 @@
+#include <chrono>
 #include <exception>
 #include <iostream>
 #include <memory>
@@ -48,6 +49,8 @@ int main() {
     veritas::gatekeeper::SaslServerOptions sasl_options;
     sasl_options.fake_salt_secret = config.fake_salt_secret;
     sasl_options.token_ttl_days = config.token_ttl_days;
+    sasl_options.token_rotation_grace_ttl =
+        std::chrono::seconds(config.token_rotation_grace_seconds);
     sasl_options.enable_sasl = config.enable_sasl;
     sasl_options.sasl_service = config.sasl_service;
     sasl_options.sasl_mech_list = config.sasl_mech_list;
