@@ -221,10 +221,20 @@ Implemented
   - lifecycle mapping to active/revoked/expired/unknown states,
   - revocation reason/timestamp return for revoked records.
 - Security hardening controls are wired in Notary runtime:
-  - fixed-window per-peer rate limiting on issue/renew/revoke/status paths,
+  - fixed-window identity-scoped rate limiting on issue/renew/revoke/status
+    paths (primary),
+  - fixed-window per-peer rate limiting on issue/renew/revoke/status paths
+    (secondary),
   - request-size limits for token/csr/serial/idempotency/reason/actor fields,
   - in-memory security counters (`rate_limited`, `authz_failure`,
     `validation_failure`, `policy_denied`) for future analytics/lockout policy.
+  - runtime policy env vars:
+    - `NOTARY_RATE_LIMIT_IDENTITY_MAX_REQUESTS`
+    - `NOTARY_RATE_LIMIT_IDENTITY_WINDOW_SECONDS`
+    - `NOTARY_RATE_LIMIT_IDENTITY_MAX_KEYS`
+    - `NOTARY_RATE_LIMIT_PEER_MAX_REQUESTS`
+    - `NOTARY_RATE_LIMIT_PEER_WINDOW_SECONDS`
+    - `NOTARY_RATE_LIMIT_PEER_MAX_KEYS`
 - Structured JSON event logging is available for startup and RPC-path events.
 - Unit/integration tests cover:
   - config validation and read-file behavior,
@@ -239,7 +249,7 @@ Implemented
     revocation actor metadata.
 
 Placeholders / incomplete
-- Rate-limit/counter configuration is not yet exposed as runtime config.
+- Security metrics are currently in-memory only (no export sink).
 
 Aspirational
 - Runtime-tunable abuse-control policy and exportable security metrics.

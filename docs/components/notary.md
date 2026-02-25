@@ -22,7 +22,9 @@ authenticated authorization context.
     - `GetCertificateStatus` returns active/revoked/expired/unknown lifecycle
       state from persisted issuance records.
   - `security_controls.*`:
-    - fixed-window per-peer request rate limiting for issue/renew/revoke/status,
+    - fixed-window identity-scoped request rate limiting (primary) for
+      issue/renew/revoke/status,
+    - fixed-window per-peer request rate limiting (secondary),
     - in-memory security event counters for future policy/lockout analytics.
   - `log_utils.*`: JSON-structured event logging for startup/RPC events.
   - `tls_utils.*`: startup TLS cert/key format and match validation.
@@ -84,11 +86,19 @@ authenticated authorization context.
   - status lookup requires `refresh_token` and validates authz + token
     ownership before returning state + validity window + revocation metadata.
 - Abuse-control hardening:
-  - mutating and status RPC paths enforce per-peer rate limits,
+  - mutating and status RPC paths enforce identity-scoped limits (primary) and
+    peer limits (secondary),
   - request-size bounds enforced on token/csr/serial/idempotency/reason/actor
     fields,
   - security counters track key events (`rate_limited`, `authz_failure`,
     `validation_failure`, `policy_denied`) for future lockout policy work.
+  - runtime limiter policy env vars:
+    - `NOTARY_RATE_LIMIT_IDENTITY_MAX_REQUESTS`
+    - `NOTARY_RATE_LIMIT_IDENTITY_WINDOW_SECONDS`
+    - `NOTARY_RATE_LIMIT_IDENTITY_MAX_KEYS`
+    - `NOTARY_RATE_LIMIT_PEER_MAX_REQUESTS`
+    - `NOTARY_RATE_LIMIT_PEER_WINDOW_SECONDS`
+    - `NOTARY_RATE_LIMIT_PEER_MAX_KEYS`
 - Operational/demo entrypoints:
   - lifecycle smoke command: `scripts/smoke_notary_lifecycle.sh`,
   - runbook: `docs/operations/notary-runbook.md`,
@@ -96,7 +106,8 @@ authenticated authorization context.
 
 ## Placeholders / incomplete
 
-- Rate-limit thresholds are code-level defaults (runtime tuning not yet wired).
+- Runtime policy currently supports limiter sizing only; dynamic metrics export
+  and adaptive policy are not implemented.
 
 ## Aspirational
 

@@ -1,3 +1,4 @@
+#include <chrono>
 #include <exception>
 #include <iostream>
 
@@ -7,6 +8,7 @@
 #include "config.h"
 #include "log_utils.h"
 #include "notary_service.h"
+#include "security_controls.h"
 #include "server.h"
 #include "signer.h"
 #include "veritas/shared/issuance_store.h"
@@ -42,8 +44,27 @@ int main() {
                                       config.signer_key_path,
                                       config.signer_chain_path});
 
-    veritas::notary::NotaryServiceImpl service(authorizer, signer,
-                                               issuance_store);
+    veritas::notary::FixedWindowRateLimiterConfig peer_limiter_config;
+    peer_limiter_config.max_requests_per_window =
+        config.rate_limit_peer_max_requests;
+    peer_limiter_config.max_keys = config.rate_limit_peer_max_keys;
+    peer_limiter_config.window =
+        std::chrono::seconds(config.rate_limit_peer_window_seconds);
+    auto peer_limiter = std::make_shared<veritas::notary::FixedWindowRateLimiter>(
+        peer_limiter_config);
+
+    veritas::notary::FixedWindowRateLimiterConfig identity_limiter_config;
+    identity_limiter_config.max_requests_per_window =
+        config.rate_limit_identity_max_requests;
+    identity_limiter_config.max_keys = config.rate_limit_identity_max_keys;
+    identity_limiter_config.window =
+        std::chrono::seconds(config.rate_limit_identity_window_seconds);
+    auto identity_limiter =
+        std::make_shared<veritas::notary::FixedWindowRateLimiter>(
+            identity_limiter_config);
+
+    veritas::notary::NotaryServiceImpl service(authorizer, signer, issuance_store,
+                                               peer_limiter, identity_limiter);
     auto runtime = veritas::notary::StartNotaryServer(config, &service);
     veritas::notary::LogNotaryEvent("Startup", grpc::Status::OK,
                                     runtime.bound_addr);

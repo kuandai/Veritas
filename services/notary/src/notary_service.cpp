@@ -522,12 +522,14 @@ grpc::Status ValidateStatusRequest(
 NotaryServiceImpl::NotaryServiceImpl(
     std::shared_ptr<RequestAuthorizer> authorizer, std::shared_ptr<Signer> signer,
     std::shared_ptr<veritas::shared::IssuanceStore> issuance_store,
-    std::shared_ptr<RateLimiter> rate_limiter,
+    std::shared_ptr<RateLimiter> peer_rate_limiter,
+    std::shared_ptr<RateLimiter> identity_rate_limiter,
     std::shared_ptr<SecurityMetrics> security_metrics)
     : authorizer_(std::move(authorizer)),
       signer_(std::move(signer)),
       issuance_store_(std::move(issuance_store)),
-      rate_limiter_(std::move(rate_limiter)),
+      peer_rate_limiter_(std::move(peer_rate_limiter)),
+      identity_rate_limiter_(std::move(identity_rate_limiter)),
       security_metrics_(std::move(security_metrics)) {
   if (!authorizer_) {
     throw std::runtime_error("notary authorizer is required");
@@ -538,8 +540,16 @@ NotaryServiceImpl::NotaryServiceImpl(
   if (!issuance_store_) {
     throw std::runtime_error("notary issuance store is required");
   }
-  if (!rate_limiter_) {
-    rate_limiter_ = std::make_shared<FixedWindowRateLimiter>();
+  if (!peer_rate_limiter_) {
+    peer_rate_limiter_ = std::make_shared<FixedWindowRateLimiter>();
+  }
+  if (!identity_rate_limiter_) {
+    FixedWindowRateLimiterConfig identity_config;
+    identity_config.max_requests_per_window = 5;
+    identity_config.max_keys = 10000;
+    identity_config.window = std::chrono::hours(1);
+    identity_rate_limiter_ =
+        std::make_shared<FixedWindowRateLimiter>(identity_config);
   }
   if (!security_metrics_) {
     security_metrics_ = std::make_shared<InMemorySecurityMetrics>();
@@ -550,8 +560,9 @@ grpc::Status NotaryServiceImpl::IssueCertificate(
     grpc::ServerContext* context,
     const veritas::notary::v1::IssueCertificateRequest* request,
     veritas::notary::v1::IssueCertificateResponse* response) {
-  const auto rate_key = std::string("issue:") + ExtractPeerIdentity(context);
-  if (!rate_limiter_->Allow(rate_key)) {
+  const auto peer_rate_key =
+      std::string("issue:peer:") + ExtractPeerIdentity(context);
+  if (!peer_rate_limiter_->Allow(peer_rate_key)) {
     security_metrics_->Increment("rate_limited");
     const auto status = StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_RATE_LIMITED,
@@ -578,6 +589,16 @@ grpc::Status NotaryServiceImpl::IssueCertificate(
     const auto mapped = MapAuthzStatusToIssueStatus(authz, response);
     LogNotaryEvent("IssueCertificate", mapped, "authorization_failed");
     return mapped;
+  }
+  const auto identity_rate_key =
+      std::string("issue:identity:") + principal_user_uuid;
+  if (!identity_rate_limiter_->Allow(identity_rate_key)) {
+    security_metrics_->Increment("rate_limited");
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_RATE_LIMITED,
+        "request rate limit exceeded");
+    LogNotaryEvent("IssueCertificate", status, "rate_limited");
+    return status;
   }
 
   std::string token_hash;
@@ -709,8 +730,9 @@ grpc::Status NotaryServiceImpl::RenewCertificate(
     grpc::ServerContext* context,
     const veritas::notary::v1::RenewCertificateRequest* request,
     veritas::notary::v1::RenewCertificateResponse* response) {
-  const auto rate_key = std::string("renew:") + ExtractPeerIdentity(context);
-  if (!rate_limiter_->Allow(rate_key)) {
+  const auto peer_rate_key =
+      std::string("renew:peer:") + ExtractPeerIdentity(context);
+  if (!peer_rate_limiter_->Allow(peer_rate_key)) {
     security_metrics_->Increment("rate_limited");
     const auto status = StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_RATE_LIMITED,
@@ -737,6 +759,16 @@ grpc::Status NotaryServiceImpl::RenewCertificate(
     const auto mapped = MapAuthzStatusToRenewStatus(authz, response);
     LogNotaryEvent("RenewCertificate", mapped, "authorization_failed");
     return mapped;
+  }
+  const auto identity_rate_key =
+      std::string("renew:identity:") + principal_user_uuid;
+  if (!identity_rate_limiter_->Allow(identity_rate_key)) {
+    security_metrics_->Increment("rate_limited");
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_RATE_LIMITED,
+        "request rate limit exceeded");
+    LogNotaryEvent("RenewCertificate", status, "rate_limited");
+    return status;
   }
 
   std::string token_hash;
@@ -926,8 +958,9 @@ grpc::Status NotaryServiceImpl::RevokeCertificate(
     grpc::ServerContext* context,
     const veritas::notary::v1::RevokeCertificateRequest* request,
     veritas::notary::v1::RevokeCertificateResponse* response) {
-  const auto rate_key = std::string("revoke:") + ExtractPeerIdentity(context);
-  if (!rate_limiter_->Allow(rate_key)) {
+  const auto peer_rate_key =
+      std::string("revoke:peer:") + ExtractPeerIdentity(context);
+  if (!peer_rate_limiter_->Allow(peer_rate_key)) {
     security_metrics_->Increment("rate_limited");
     const auto status = StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_RATE_LIMITED,
@@ -952,6 +985,16 @@ grpc::Status NotaryServiceImpl::RevokeCertificate(
     const auto mapped = MapAuthzStatusToRevokeStatus(authz, response);
     LogNotaryEvent("RevokeCertificate", mapped, "authorization_failed");
     return mapped;
+  }
+  const auto identity_rate_key =
+      std::string("revoke:identity:") + principal_user_uuid;
+  if (!identity_rate_limiter_->Allow(identity_rate_key)) {
+    security_metrics_->Increment("rate_limited");
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_RATE_LIMITED,
+        "request rate limit exceeded");
+    LogNotaryEvent("RevokeCertificate", status, "rate_limited");
+    return status;
   }
 
   std::string token_hash;
@@ -1025,8 +1068,9 @@ grpc::Status NotaryServiceImpl::GetCertificateStatus(
     grpc::ServerContext* context,
     const veritas::notary::v1::GetCertificateStatusRequest* request,
     veritas::notary::v1::GetCertificateStatusResponse* response) {
-  const auto rate_key = std::string("status:") + ExtractPeerIdentity(context);
-  if (!rate_limiter_->Allow(rate_key)) {
+  const auto peer_rate_key =
+      std::string("status:peer:") + ExtractPeerIdentity(context);
+  if (!peer_rate_limiter_->Allow(peer_rate_key)) {
     security_metrics_->Increment("rate_limited");
     const auto status = StatusWithNotaryError(
         response, veritas::notary::v1::NOTARY_ERROR_CODE_RATE_LIMITED,
@@ -1052,6 +1096,16 @@ grpc::Status NotaryServiceImpl::GetCertificateStatus(
     const auto mapped = MapAuthzStatusToStatusReadError(authz, response);
     LogNotaryEvent("GetCertificateStatus", mapped, "authorization_failed");
     return mapped;
+  }
+  const auto identity_rate_key =
+      std::string("status:identity:") + principal_user_uuid;
+  if (!identity_rate_limiter_->Allow(identity_rate_key)) {
+    security_metrics_->Increment("rate_limited");
+    const auto status = StatusWithNotaryError(
+        response, veritas::notary::v1::NOTARY_ERROR_CODE_RATE_LIMITED,
+        "request rate limit exceeded");
+    LogNotaryEvent("GetCertificateStatus", status, "rate_limited");
+    return status;
   }
 
   std::string token_hash;

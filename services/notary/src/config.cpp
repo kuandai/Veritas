@@ -1,9 +1,11 @@
 #include "config.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cctype>
 #include <cstdlib>
 #include <fstream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -32,6 +34,23 @@ bool GetEnvOrDefaultBool(const char* name, bool fallback) {
     return false;
   }
   return fallback;
+}
+
+size_t GetEnvOrDefaultSize(const char* name, size_t fallback) {
+  const char* value = std::getenv(name);
+  if (!value || value[0] == '\0') {
+    return fallback;
+  }
+
+  errno = 0;
+  char* end = nullptr;
+  const unsigned long long parsed = std::strtoull(value, &end, 10);
+  if (errno != 0 || end == value || (end && *end != '\0') || parsed == 0 ||
+      parsed > std::numeric_limits<size_t>::max()) {
+    throw std::runtime_error(std::string(name) +
+                             " must be a positive integer");
+  }
+  return static_cast<size_t>(parsed);
 }
 
 NotaryStoreBackend ParseStoreBackend(const std::string& value) {
@@ -65,6 +84,24 @@ NotaryConfig LoadConfig() {
   config.store_backend =
       ParseStoreBackend(GetEnvOrEmpty("NOTARY_STORE_BACKEND"));
   config.store_uri = GetEnvOrEmpty("NOTARY_STORE_URI");
+  config.rate_limit_identity_max_requests = GetEnvOrDefaultSize(
+      "NOTARY_RATE_LIMIT_IDENTITY_MAX_REQUESTS",
+      config.rate_limit_identity_max_requests);
+  config.rate_limit_identity_max_keys = GetEnvOrDefaultSize(
+      "NOTARY_RATE_LIMIT_IDENTITY_MAX_KEYS",
+      config.rate_limit_identity_max_keys);
+  config.rate_limit_identity_window_seconds = GetEnvOrDefaultSize(
+      "NOTARY_RATE_LIMIT_IDENTITY_WINDOW_SECONDS",
+      config.rate_limit_identity_window_seconds);
+  config.rate_limit_peer_max_requests = GetEnvOrDefaultSize(
+      "NOTARY_RATE_LIMIT_PEER_MAX_REQUESTS",
+      config.rate_limit_peer_max_requests);
+  config.rate_limit_peer_max_keys = GetEnvOrDefaultSize(
+      "NOTARY_RATE_LIMIT_PEER_MAX_KEYS",
+      config.rate_limit_peer_max_keys);
+  config.rate_limit_peer_window_seconds = GetEnvOrDefaultSize(
+      "NOTARY_RATE_LIMIT_PEER_WINDOW_SECONDS",
+      config.rate_limit_peer_window_seconds);
 
   if (config.bind_addr.empty()) {
     throw std::runtime_error("NOTARY_BIND_ADDR is required");

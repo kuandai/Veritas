@@ -84,6 +84,30 @@ TEST(NotaryConfigTest, LoadsValidConfiguration) {
   EXPECT_EQ(config.store_backend, NotaryStoreBackend::InMemory);
 }
 
+TEST(NotaryConfigTest, LoadsRateLimitOverrides) {
+  RequiredEnv env;
+  ScopedEnv identity_max("NOTARY_RATE_LIMIT_IDENTITY_MAX_REQUESTS", "9");
+  ScopedEnv identity_keys("NOTARY_RATE_LIMIT_IDENTITY_MAX_KEYS", "321");
+  ScopedEnv identity_window("NOTARY_RATE_LIMIT_IDENTITY_WINDOW_SECONDS", "1800");
+  ScopedEnv peer_max("NOTARY_RATE_LIMIT_PEER_MAX_REQUESTS", "200");
+  ScopedEnv peer_keys("NOTARY_RATE_LIMIT_PEER_MAX_KEYS", "444");
+  ScopedEnv peer_window("NOTARY_RATE_LIMIT_PEER_WINDOW_SECONDS", "120");
+
+  const auto config = LoadConfig();
+  EXPECT_EQ(config.rate_limit_identity_max_requests, 9U);
+  EXPECT_EQ(config.rate_limit_identity_max_keys, 321U);
+  EXPECT_EQ(config.rate_limit_identity_window_seconds, 1800U);
+  EXPECT_EQ(config.rate_limit_peer_max_requests, 200U);
+  EXPECT_EQ(config.rate_limit_peer_max_keys, 444U);
+  EXPECT_EQ(config.rate_limit_peer_window_seconds, 120U);
+}
+
+TEST(NotaryConfigTest, InvalidRateLimitConfigFailsClosed) {
+  RequiredEnv env;
+  ScopedEnv invalid_identity_max("NOTARY_RATE_LIMIT_IDENTITY_MAX_REQUESTS", "0");
+  EXPECT_THROW(LoadConfig(), std::runtime_error);
+}
+
 TEST(NotaryConfigTest, SecureGatekeeperModeRequiresCaBundle) {
   RequiredEnv env;
   ScopedEnv secure_gatekeeper("NOTARY_GATEKEEPER_ALLOW_INSECURE", "false");

@@ -1,10 +1,12 @@
 #include "notary_service.h"
 
 #include <chrono>
+#include <deque>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 #include <gtest/gtest.h>
 #include <grpcpp/server_context.h>
@@ -127,6 +129,62 @@ class DenyRateLimiter final : public RateLimiter {
   bool Allow(std::string_view /*key*/) override { return false; }
 };
 
+class AllowRateLimiter final : public RateLimiter {
+ public:
+  bool Allow(std::string_view /*key*/) override { return true; }
+};
+
+class RecordingRateLimiter final : public RateLimiter {
+ public:
+  explicit RecordingRateLimiter(bool allow = true) : allow_(allow) {}
+
+  bool Allow(std::string_view key) override {
+    keys_.emplace_back(key);
+    return allow_;
+  }
+
+  const std::deque<std::string>& keys() const { return keys_; }
+
+ private:
+  bool allow_;
+  std::deque<std::string> keys_;
+};
+
+class OnePerKeyRateLimiter final : public RateLimiter {
+ public:
+  bool Allow(std::string_view key) override {
+    const std::string key_str(key);
+    auto& count = counts_[key_str];
+    ++count;
+    return count <= 1;
+  }
+
+ private:
+  std::unordered_map<std::string, int> counts_;
+};
+
+class TokenMappedAuthorizer final : public RequestAuthorizer {
+ public:
+  explicit TokenMappedAuthorizer(
+      std::unordered_map<std::string, std::string> mapping)
+      : mapping_(std::move(mapping)) {}
+
+  grpc::Status AuthorizeRefreshToken(std::string_view refresh_token,
+                                     std::string* user_uuid) const override {
+    const auto it = mapping_.find(std::string(refresh_token));
+    if (it == mapping_.end()) {
+      return grpc::Status(grpc::StatusCode::UNAUTHENTICATED, "unknown token");
+    }
+    if (user_uuid) {
+      *user_uuid = it->second;
+    }
+    return grpc::Status::OK;
+  }
+
+ private:
+  std::unordered_map<std::string, std::string> mapping_;
+};
+
 void SeedIssuedCertificate(NotaryServiceImpl* service, FakeSigner* signer,
                            const std::string& token,
                            const std::string& serial,
@@ -220,7 +278,8 @@ TEST(NotaryServiceTest, IssueCertificateRateLimitingRecordsMetric) {
   auto store = MakeInMemoryStore();
   auto limiter = std::make_shared<DenyRateLimiter>();
   auto metrics = std::make_shared<InMemorySecurityMetrics>();
-  NotaryServiceImpl service(authorizer, signer, store, limiter, metrics);
+  NotaryServiceImpl service(authorizer, signer, store, limiter, nullptr,
+                            metrics);
 
   grpc::ServerContext context;
   veritas::notary::v1::IssueCertificateRequest request;
@@ -235,6 +294,132 @@ TEST(NotaryServiceTest, IssueCertificateRateLimitingRecordsMetric) {
   EXPECT_EQ(response.error().code(),
             veritas::notary::v1::NOTARY_ERROR_CODE_RATE_LIMITED);
   EXPECT_EQ(metrics->Get("rate_limited"), 1U);
+}
+
+TEST(NotaryServiceTest, IssueCertificateUsesIdentityAndPeerRateLimitKeys) {
+  auto authorizer =
+      std::make_shared<FixedAuthorizer>(grpc::Status::OK, "identity-user");
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  auto peer_limiter = std::make_shared<RecordingRateLimiter>(true);
+  auto identity_limiter = std::make_shared<RecordingRateLimiter>(true);
+  NotaryServiceImpl service(authorizer, signer, store, peer_limiter,
+                            identity_limiter);
+
+  SigningResult result;
+  result.certificate_serial = "SERIAL-K1";
+  result.certificate_pem = "leaf";
+  result.certificate_chain_pem = "chain";
+  result.not_before = std::chrono::system_clock::now();
+  result.not_after = result.not_before + std::chrono::minutes(10);
+  signer->SetNextIssueResult(result);
+
+  grpc::ServerContext context;
+  veritas::notary::v1::IssueCertificateRequest request;
+  veritas::notary::v1::IssueCertificateResponse response;
+  request.set_refresh_token("token");
+  request.set_csr_der("csr");
+  request.set_requested_ttl_seconds(600);
+  request.set_idempotency_key("idem-rate-1");
+  ASSERT_TRUE(service.IssueCertificate(&context, &request, &response).ok());
+
+  ASSERT_FALSE(peer_limiter->keys().empty());
+  ASSERT_FALSE(identity_limiter->keys().empty());
+  EXPECT_EQ(peer_limiter->keys().front().rfind("issue:peer:", 0), 0U);
+  EXPECT_EQ(identity_limiter->keys().front(),
+            "issue:identity:identity-user");
+}
+
+TEST(NotaryServiceTest, IdentityRateLimiterBlocksRepeatedRequestsForSameIdentity) {
+  auto authorizer =
+      std::make_shared<FixedAuthorizer>(grpc::Status::OK, "identity-user");
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  auto peer_limiter = std::make_shared<AllowRateLimiter>();
+  auto identity_limiter = std::make_shared<OnePerKeyRateLimiter>();
+  NotaryServiceImpl service(authorizer, signer, store, peer_limiter,
+                            identity_limiter);
+
+  SigningResult first;
+  first.certificate_serial = "SERIAL-I1";
+  first.certificate_pem = "leaf-1";
+  first.certificate_chain_pem = "chain-1";
+  first.not_before = std::chrono::system_clock::now();
+  first.not_after = first.not_before + std::chrono::minutes(10);
+  signer->SetNextIssueResult(first);
+
+  grpc::ServerContext context_one;
+  veritas::notary::v1::IssueCertificateRequest request_one;
+  veritas::notary::v1::IssueCertificateResponse response_one;
+  request_one.set_refresh_token("token-a");
+  request_one.set_csr_der("csr");
+  request_one.set_requested_ttl_seconds(600);
+  request_one.set_idempotency_key("idem-i-1");
+  ASSERT_TRUE(service.IssueCertificate(&context_one, &request_one, &response_one)
+                  .ok());
+
+  SigningResult second = first;
+  second.certificate_serial = "SERIAL-I2";
+  signer->SetNextIssueResult(second);
+
+  grpc::ServerContext context_two;
+  veritas::notary::v1::IssueCertificateRequest request_two;
+  veritas::notary::v1::IssueCertificateResponse response_two;
+  request_two.set_refresh_token("token-b");
+  request_two.set_csr_der("csr");
+  request_two.set_requested_ttl_seconds(600);
+  request_two.set_idempotency_key("idem-i-2");
+  const auto status =
+      service.IssueCertificate(&context_two, &request_two, &response_two);
+  EXPECT_EQ(status.error_code(), grpc::StatusCode::RESOURCE_EXHAUSTED);
+  EXPECT_EQ(response_two.error().code(),
+            veritas::notary::v1::NOTARY_ERROR_CODE_RATE_LIMITED);
+  EXPECT_EQ(signer->issue_calls(), 1);
+}
+
+TEST(NotaryServiceTest, IdentityRateLimiterIsolatesDifferentIdentities) {
+  auto authorizer = std::make_shared<TokenMappedAuthorizer>(
+      std::unordered_map<std::string, std::string>{
+          {"token-a", "identity-a"}, {"token-b", "identity-b"}});
+  auto signer = std::make_shared<FakeSigner>();
+  auto store = MakeInMemoryStore();
+  auto peer_limiter = std::make_shared<AllowRateLimiter>();
+  auto identity_limiter = std::make_shared<OnePerKeyRateLimiter>();
+  NotaryServiceImpl service(authorizer, signer, store, peer_limiter,
+                            identity_limiter);
+
+  SigningResult first;
+  first.certificate_serial = "SERIAL-D1";
+  first.certificate_pem = "leaf-d1";
+  first.certificate_chain_pem = "chain-d1";
+  first.not_before = std::chrono::system_clock::now();
+  first.not_after = first.not_before + std::chrono::minutes(10);
+  signer->SetNextIssueResult(first);
+
+  grpc::ServerContext context_one;
+  veritas::notary::v1::IssueCertificateRequest request_one;
+  veritas::notary::v1::IssueCertificateResponse response_one;
+  request_one.set_refresh_token("token-a");
+  request_one.set_csr_der("csr");
+  request_one.set_requested_ttl_seconds(600);
+  request_one.set_idempotency_key("idem-d-1");
+  ASSERT_TRUE(service.IssueCertificate(&context_one, &request_one, &response_one)
+                  .ok());
+
+  SigningResult second = first;
+  second.certificate_serial = "SERIAL-D2";
+  signer->SetNextIssueResult(second);
+
+  grpc::ServerContext context_two;
+  veritas::notary::v1::IssueCertificateRequest request_two;
+  veritas::notary::v1::IssueCertificateResponse response_two;
+  request_two.set_refresh_token("token-b");
+  request_two.set_csr_der("csr");
+  request_two.set_requested_ttl_seconds(600);
+  request_two.set_idempotency_key("idem-d-2");
+  ASSERT_TRUE(service.IssueCertificate(&context_two, &request_two, &response_two)
+                  .ok());
+  EXPECT_EQ(signer->issue_calls(), 2);
 }
 
 TEST(NotaryServiceTest, IssueCertificatePersistsAndReturnsIssuedRecord) {

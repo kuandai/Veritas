@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 namespace veritas::notary {
@@ -26,6 +27,13 @@ struct NotaryConfig {
 
   NotaryStoreBackend store_backend = NotaryStoreBackend::InMemory;
   std::string store_uri;
+
+  size_t rate_limit_identity_max_requests = 5;
+  size_t rate_limit_identity_max_keys = 10000;
+  size_t rate_limit_identity_window_seconds = 3600;
+  size_t rate_limit_peer_max_requests = 120;
+  size_t rate_limit_peer_max_keys = 10000;
+  size_t rate_limit_peer_window_seconds = 60;
 };
 
 NotaryConfig LoadConfig();
