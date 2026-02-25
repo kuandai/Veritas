@@ -29,7 +29,14 @@ token rotation callbacks, and a security context for transport layers (TLS/QUIC)
 - Client storage layer now includes a `TokenStore` abstraction with:
   - `Libsecret` backend for secure keyring-backed persistence.
   - File fallback backend gated by explicit opt-in
-    (`allow_insecure_fallback=true`).
+    (`allow_insecure_fallback=true`) and now encrypted/integrity-protected by
+    default.
+  - File encryption key derivation is machine-bound (stable machine identity +
+    service/account domain separation).
+  - Legacy plaintext file payloads are migrated forward automatically on load
+    when migration is enabled.
+  - Explicit break-glass plaintext mode exists behind
+    `break_glass_plaintext_file=true` and emits runtime warnings.
 - `IdentityManager` persistence integration:
   - Loads persisted identity at startup when a token store is configured.
   - Persists successful auth result (`user_uuid`, refresh token, expiry).

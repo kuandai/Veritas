@@ -635,6 +635,7 @@ TEST(IdentityManagerIntegrationTest, AuthenticatePersistsIdentity) {
   ::veritas::storage::TokenStoreConfig store_config;
   store_config.backend = ::veritas::storage::TokenStoreBackend::File;
   store_config.allow_insecure_fallback = true;
+  store_config.machine_identity_override = "test-machine";
   store_config.file_path = TempPath("veritas_identity_store");
 
   ::veritas::IdentityManager manager([] { return std::string("unused"); },

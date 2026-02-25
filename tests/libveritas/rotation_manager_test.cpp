@@ -157,6 +157,7 @@ TEST(RotationWorkerTest, EmitsUnreachableWarning) {
   store_config.backend = storage::TokenStoreBackend::File;
   store_config.allow_insecure_fallback = true;
   store_config.file_path = UniqueTempFile("unreachable").string();
+  store_config.machine_identity_override = "test-machine";
 
   auto store = storage::CreateTokenStore(store_config);
   storage::StoredIdentity seeded;

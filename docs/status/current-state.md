@@ -96,7 +96,13 @@ Implemented
   (`x-veritas-protocol-selected`) on success paths.
 - Storage layer includes a `TokenStore` abstraction with:
   - `Libsecret` backend for keyring-backed identity persistence.
-  - File fallback backend that requires explicit insecure opt-in.
+  - File fallback backend that requires explicit insecure opt-in and uses
+    encrypted/integrity-protected payloads by default.
+  - File encryption is machine-bound (machine identity + service/account
+    domain separation).
+  - Legacy plaintext payloads can migrate forward on load.
+  - Break-glass plaintext mode is explicit (`break_glass_plaintext_file=true`)
+    and warning-emitting.
 - `IdentityManager` now integrates persistence when configured with a token store:
   - startup load of persisted identity,
   - save on successful authentication,

@@ -21,6 +21,7 @@ TEST(IdentityManagerPersistenceTest, LoadsPersistedIdentityAtStartup) {
   config.backend = storage::TokenStoreBackend::File;
   config.file_path = UniqueTempFile("startup").string();
   config.allow_insecure_fallback = true;
+  config.machine_identity_override = "test-machine";
 
   auto store = storage::CreateTokenStore(config);
   storage::StoredIdentity seeded;
@@ -51,6 +52,7 @@ TEST(IdentityManagerPersistenceTest, ClearPersistedIdentityRemovesStoredValue) {
   config.backend = storage::TokenStoreBackend::File;
   config.file_path = UniqueTempFile("clear").string();
   config.allow_insecure_fallback = true;
+  config.machine_identity_override = "test-machine";
 
   auto store = storage::CreateTokenStore(config);
   storage::StoredIdentity seeded;
@@ -144,6 +146,7 @@ TEST(IdentityManagerNotaryStateTest, NotaryFailuresMapToMachineReadableError) {
   store_config.backend = storage::TokenStoreBackend::File;
   store_config.file_path = UniqueTempFile("notary_error").string();
   store_config.allow_insecure_fallback = true;
+  store_config.machine_identity_override = "test-machine";
 
   auto store = storage::CreateTokenStore(store_config);
   storage::StoredIdentity seeded;

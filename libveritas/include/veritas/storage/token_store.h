@@ -25,6 +25,9 @@ struct TokenStoreConfig {
   std::string account_name = "default";
   std::string file_path;
   bool allow_insecure_fallback = false;
+  bool break_glass_plaintext_file = false;
+  bool migrate_legacy_plaintext = true;
+  std::string machine_identity_override;
 };
 
 class TokenStoreError : public std::runtime_error {
